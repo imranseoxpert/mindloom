@@ -225,6 +225,7 @@
     theme: 'fresh', layout: 'mindmap', lineStyle: 'curve', pattern: 'dots', font: 'system',
     shapes: { root: 'rounded', main: 'rounded', sub: 'rounded' },
     rainbow: null, // null = theme default
+    numbering: 'off', // 'on' = automatic outline numbering (1, 1.1, 1.1.1…)
     hGap: 56, vGap: 14, lineWidth: 2, maxWidth: 260, fontScale: 1,
   };
 

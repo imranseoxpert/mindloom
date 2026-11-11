@@ -58,11 +58,17 @@
       <div id="focus-bar" hidden><span>Focused on <b id="focus-name"></b></span><button data-cmd="focus">Show whole map</button></div>
       <div id="mode-hint" hidden></div>
       <div id="searchbar" hidden>
-        <input id="search-input" placeholder="Find in map…" />
-        <span id="search-count"></span>
-        <button class="icon-btn" id="search-prev" title="Previous">↑</button>
-        <button class="icon-btn" id="search-next" title="Next">↓</button>
-        <button class="icon-btn" id="search-close" title="Close">✕</button>
+        <div class="search-row">
+          <input id="search-input" placeholder="Find in map…" />
+          <span id="search-count"></span>
+          <button class="icon-btn" id="search-prev" title="Previous">↑</button>
+          <button class="icon-btn" id="search-next" title="Next">↓</button>
+          <button class="icon-btn" id="search-close" title="Close">✕</button>
+        </div>
+        <div class="search-row">
+          <input id="replace-input" placeholder="Replace with…" />
+          <button class="btn" id="replace-all" title="Replace in all topic text and notes">Replace all</button>
+        </div>
       </div>
       <div id="zoombar">
         <button class="icon-btn" data-cmd="zoomOut" title="Zoom out (⌘−)">−</button>

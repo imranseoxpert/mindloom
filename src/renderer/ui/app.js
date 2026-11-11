@@ -385,6 +385,21 @@
       n.children.sort((a, b) => a.text.localeCompare(b.text, undefined, { numeric: true, sensitivity: 'base' }));
       App.commit();
     },
+    sortByDue() {
+      const n = App.primaryNode();
+      if (!n || n.children.length < 2) return;
+      if (M.sortByDue(App.doc, n.id)) App.commit(); else toast('Subtopics are already in due-date order.');
+    },
+    async due() {
+      const n = App.primaryNode();
+      if (!n) return toast('Select a topic first.');
+      const v = await App.prompt('Due date', 'Due date for this topic, as YYYY-MM-DD (leave empty to remove):', n.due || '', '2026-12-01');
+      if (v == null) return;
+      const val = v.trim();
+      if (val && !M.isDateStr(val)) return toast('That is not a valid date — use YYYY-MM-DD, e.g. 2026-12-01.');
+      App.selectedNodes().forEach((x) => { if (val) x.due = val; else delete x.due; });
+      App.commit();
+    },
     resetPosition() {
       let n = 0;
       for (const node of App.selectedNodes()) if (node.offset) { delete node.offset; n++; }
@@ -1126,7 +1141,9 @@
         { label: n.collapsed ? 'Expand branch' : 'Collapse branch', kb: K('Mod+/'), run: run('toggleCollapse'), disabled: !n.children.length },
         { label: 'Focus on this branch', kb: K('Mod+Shift+F'), run: run('focus'), disabled: isRoot || !f.parent, icon: 'focus' },
         { label: 'Sort subtopics A→Z', run: run('sortChildren'), disabled: n.children.length < 2 },
+        { label: 'Sort subtopics by due date', run: run('sortByDue'), disabled: n.children.length < 2 },
         '-',
+        { label: n.due ? `Due date: ${n.due}…` : 'Set due date…', run: run('due') },
         { label: 'Relationship…', kb: K('Mod+Shift+R'), run: run('relation'), icon: 'relation' },
         { label: n.boundary ? 'Remove boundary' : 'Add boundary', kb: K('Mod+Shift+B'), run: run('boundary'), icon: 'boundary' },
         { label: 'Note…', kb: K('Mod+Shift+M'), run: run('note'), icon: 'note' },
@@ -1364,6 +1381,8 @@
     async exportOPML() { if (await P.exportFile(fileBase() + '.opml', IO.toOPML(App.doc), 'opml', 'OPML')) toast('Exported OPML'); },
     async exportText() { if (await P.exportFile(fileBase() + '.txt', IO.toText(App.doc), 'txt', 'Text')) toast('Exported text outline'); },
     async exportFreeMind() { if (await P.exportFile(fileBase() + '.mm', IO.toFreeMind(App.doc), 'mm', 'FreeMind')) toast('Exported FreeMind map'); },
+    async exportCSV() { if (await P.exportFile(fileBase() + '.csv', IO.toCSV(App.doc), 'csv', 'CSV Spreadsheet')) toast('Exported CSV — opens in Excel, Sheets or Numbers'); },
+    async exportHTML() { if (await P.exportFile(fileBase() + '.html', IO.toHTML(App.doc, exportData().svg), 'html', 'Web Page')) toast('Exported web page — open it in any browser'); },
     async exportJSON() { if (await P.exportFile(fileBase() + '.mindloom', IO.serialize(App.doc), 'mindloom', 'Mindloom map')) toast('Exported copy'); },
     async copyImage() {
       try {
@@ -1467,6 +1486,20 @@
     $('#search-next').onclick = () => stepSearch(1);
     $('#search-prev').onclick = () => stepSearch(-1);
     $('#search-close').onclick = closeSearch;
+    const doReplace = () => {
+      const find = $('#search-input').value;
+      if (!find) { toast('Type what to find first.'); return; }
+      const n = M.replaceText(App.doc, find, $('#replace-input').value);
+      if (!n) { toast(`No matches for “${find}”.`); return; }
+      App.commit();
+      runSearch();
+      toast(`Replaced ${n} occurrence${n === 1 ? '' : 's'} — undo with ${App.K('Mod+Z')}`, 2600);
+    };
+    $('#replace-all').onclick = doReplace;
+    $('#replace-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); doReplace(); }
+      if (e.key === 'Escape') { e.preventDefault(); closeSearch(); }
+    });
 
     // drag & drop files: map files open, images attach to the topic under the pointer
     window.addEventListener('dragover', (e) => { e.preventDefault(); });

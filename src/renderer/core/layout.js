@@ -38,14 +38,16 @@
     return `${st.italic ? 'italic ' : ''}${st.bold ? 700 : 400} ${st.fontSize}px ${st.font}`;
   }
 
-  function measureNode(node, depth, branch, ctx, isFloating) {
+  function measureNode(node, depth, branch, ctx, isFloating, num) {
     const T = ML.themes;
     const st = T.resolveStyle(node, depth, branch, ctx.theme, ctx.settings, isFloating);
     const fs = st.fontSize;
     const font = fontString(st);
     const lh = Math.round(fs * 1.32);
     const maxW = (node.style && node.style.width) || (depth === 0 ? ctx.settings.maxWidth + 80 : ctx.settings.maxWidth);
-    const text = node.text && node.text.length ? node.text : ' ';
+    const rawText = node.text && node.text.length ? node.text : ' ';
+    // automatic numbering prefixes the first line only, like an outline (1, 1.1, 1.1.1…)
+    const text = num && node.text ? num + '  ' + rawText : rawText;
     const lines = wrapText(text, font, maxW, ctx.measure);
     let textW = 0;
     for (const l of lines) textW = Math.max(textW, ctx.measure(l, font));
@@ -68,6 +70,11 @@
 
     const tagFont = `600 11px ${st.font}`;
     const tags = (node.tags || []).map((t) => ({ text: t, w: Math.ceil(ctx.measure(t, tagFont)) + 14 }));
+    // a due date rides in the same chip row as the labels, first in line, red when overdue
+    if (node.due && ML.model && ML.model.isDateStr(node.due)) {
+      const label = '📅 ' + ML.model.formatDue(node.due);
+      tags.unshift({ text: label, kind: 'due', overdue: ML.model.isOverdue(node), w: Math.ceil(ctx.measure(label, tagFont)) + 14 });
+    }
     const tagsW = tags.reduce((s, t) => s + t.w + 4, 0) - (tags.length ? 4 : 0);
     const tagsH = tags.length ? 18 : 0;
 
@@ -109,13 +116,15 @@
   }
 
   // ---------- visual tree ----------
-  function buildVT(node, depth, branch, ctx, isFloating, parent) {
-    const box = measureNode(node, depth, branch, ctx, isFloating);
-    const t = { id: node.id, node, depth, branch, box, w: box.w, h: box.h, x: 0, y: 0, parent, floating: isFloating, children: [] };
+  function buildVT(node, depth, branch, ctx, isFloating, parent, num) {
+    const box = measureNode(node, depth, branch, ctx, isFloating, num);
+    const t = { id: node.id, node, depth, branch, box, w: box.w, h: box.h, x: 0, y: 0, parent, floating: isFloating, children: [], num: num || '' };
     if (!node.collapsed) {
+      const numbered = ctx.settings.numbering === 'on';
       node.children.forEach((c, i) => {
         const b = depth === 0 ? (isFloating ? branch : i) : branch;
-        t.children.push(buildVT(c, depth + 1, b, ctx, isFloating, t));
+        const cnum = numbered ? (num ? num + '.' + (i + 1) : String(i + 1)) : '';
+        t.children.push(buildVT(c, depth + 1, b, ctx, isFloating, t, cnum));
       });
     }
     return t;

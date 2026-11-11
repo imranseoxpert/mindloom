@@ -164,6 +164,7 @@
       </div>
       <div class="sec"><h4>Branch line colour</h4>${swatches('lineColor', ns.lineColor, ['#adb5bd', '#495057', '#e03131', '#f76707', '#f59f00', '#2f9e44', '#0c8599', '#1c7ed6', '#6741d9', '#c2255c'])}</div>
       <div class="sec"><h4>Task</h4>${seg('task', n.task || '', [['', 'None'], ['todo', '☐ To do'], ['done', '☑ Done']])}</div>
+      <div class="sec"><h4>Due date</h4><div class="row"><input type="date" class="field" data-field="due" value="${esc(n.due || '')}"/>${n.due ? '<button class="btn" data-clear-due>Clear</button>' : ''}</div>${n.due && M.isOverdue(n) ? '<p class="muted" style="color:var(--ui-danger)">⚠ Overdue — the date chip on the map turns red until the task is done.</p>' : '<p class="muted">Shown as a 📅 chip on the topic.</p>'}</div>
       <div class="sec"><h4>Labels</h4><input class="field" data-field="tags" value="${esc((n.tags || []).join(', '))}" placeholder="Comma separated, e.g. urgent, Q3"/></div>
       <div class="sec"><h4>Hyperlink</h4><div class="row"><input class="field" data-field="link" value="${esc(n.link || '')}" placeholder="https://…"/>${n.link ? '<button class="btn" data-cmd="openLink">Open</button>' : ''}</div></div>
       <div class="sec"><h4>Image</h4>${n.image ? `${range('imgW', 'Width', n.image.w, 40, 600, 10, '')}<div class="row"><button class="btn" data-cmd="image">Replace…</button><button class="btn danger" data-remove-image>Remove</button></div>` : '<button class="btn" data-cmd="image">Insert image…</button> <span class="muted">or paste / drop one</span>'}</div>
@@ -184,7 +185,8 @@
       <div class="sec"><h4>Structure</h4><div class="grid c3">${T.LAYOUTS.map((l) => `<div class="card${s.layout === l.id ? ' on' : ''}" data-layout="${l.id}" title="${l.name}">${img(preview({ layout: l.id, theme: 'classic', lineStyle: l.id === 'down' || l.id === 'up' ? 'elbow' : 'curve', shapes: { root: 'rounded', main: 'rounded', sub: 'rounded' }, pattern: 'none' }, `lay:${l.id}`), 44)}<span class="nm">${l.name.replace(/ \(.*\)/, '')}</span></div>`).join('')}</div></div>
       <div class="sec"><h4>Branch lines</h4>${seg('lineStyle', s.lineStyle, T.LINE_STYLES.map((l) => [l.id, l.name.split(' ')[0]]))}
         ${range('lineWidth', 'Thickness', s.lineWidth, 1, 6, 0.5, '')}
-        <div class="row"><label>Rainbow</label>${seg('rainbow', s.rainbow == null ? '' : s.rainbow ? 'on' : 'off', [['', 'Theme'], ['on', 'On'], ['off', 'Off']])}</div></div>
+        <div class="row"><label>Rainbow</label>${seg('rainbow', s.rainbow == null ? '' : s.rainbow ? 'on' : 'off', [['', 'Theme'], ['on', 'On'], ['off', 'Off']])}</div>
+        <div class="row"><label>Numbering</label>${seg('numbering', s.numbering || 'off', [['off', 'Off'], ['on', '1 · 1.1 · 1.1.1']])}</div></div>
       <div class="sec"><h4>Topic shapes</h4>
         ${['root', 'main', 'sub'].map((lvl) => `<div class="row"><label>${{ root: 'Central', main: 'Main', sub: 'Subtopics' }[lvl]}</label><select class="field" data-shapelvl="${lvl}">${T.SHAPES.map((sh) => `<option value="${sh.id}"${s.shapes[lvl] === sh.id ? ' selected' : ''}>${sh.name}</option>`).join('')}</select></div>`).join('')}
       </div>
@@ -262,6 +264,7 @@
         const n = App.primaryNode();
         if (key === 'lineStyle') return setSettings({ lineStyle: v });
         if (key === 'rainbow') return setSettings({ rainbow: v === '' ? null : v === 'on' });
+        if (key === 'numbering') return setSettings({ numbering: v });
         if (key === 'align') return App.run('style', { align: v });
         if (key === 'borderWidth') return App.run('style', { borderWidth: v === '' ? null : +v });
         if (key === 'borderDash') return App.run('style', { borderDash: v === 'solid' ? null : v });
@@ -276,6 +279,7 @@
       if (mk) return App.run('marker', mk.dataset.marker);
       if (el.closest('[data-reset-style]')) { App.selectedNodes().forEach((n) => delete n.style); return App.commit({ noScroll: true }); }
       if (el.closest('[data-remove-image]')) { App.selectedNodes().forEach((n) => delete n.image); return App.commit({ noScroll: true }); }
+      if (el.closest('[data-clear-due]')) { App.selectedNodes().forEach((n) => delete n.due); App.commit({ noScroll: true }); return renderInspector(true); }
       if (el.closest('[data-clear-markers]')) { App.selectedNodes().forEach((n) => delete n.icons); return App.commit({ noScroll: true }); }
       if (el.closest('[data-clear-styles]')) { M.walkDoc(App.doc, (n) => delete n.style); return App.commit({ noScroll: true }); }
     });
@@ -436,7 +440,7 @@
   // ================= status bar + toolbar state =================
   function updateStatus() {
     const s = M.stats(App.doc);
-    $('#st-stats').textContent = `${s.nodes} topics · ${s.words} words${s.tasks ? ` · ${s.done}/${s.tasks} tasks done (${Math.round((s.done / s.tasks) * 100)}%)` : ''}`;
+    $('#st-stats').textContent = `${s.nodes} topics · ${s.words} words${s.tasks ? ` · ${s.done}/${s.tasks} tasks done (${Math.round((s.done / s.tasks) * 100)}%)` : ''}${s.overdue ? ` · ⚠ ${s.overdue} overdue` : ''}`;
     const q = (c) => document.querySelector(`#toolbar [data-cmd="${c}"]`);
     q('undo').disabled = !App.history.canUndo();
     q('redo').disabled = !App.history.canRedo();
@@ -492,10 +496,12 @@
         { label: 'SVG vector', run: run('exportSVG') },
         { label: 'PDF document', run: run('exportPDF') },
         '-',
+        { label: 'Web page (.html)', run: run('exportHTML') },
         { label: 'Markdown (.md)', run: run('exportMarkdown') },
         { label: 'OPML outline', run: run('exportOPML') },
         { label: 'Plain text outline', run: run('exportText') },
         { label: 'FreeMind / Freeplane (.mm)', run: run('exportFreeMind') },
+        { label: 'Spreadsheet (.csv)', run: run('exportCSV') },
         '-',
         { label: 'Copy map as image', run: run('copyImage') },
       ], b.left, b.bottom + 4);
@@ -542,6 +548,7 @@
         ['Collapse / expand', K('Mod+/')], ['Duplicate', K('Mod+D')], ['Copy / cut / paste', K('Mod+C / X / V')],
         ['Undo / redo', K('Mod+Z / Mod+Shift+Z')], ['Bold / italic / underline', K('Mod+B / I / U')], ['Priority 1–6', K('Mod+1 … 6')],
         ['Task checkbox', K('Mod+Shift+T')], ['Hyperlink', K('Mod+K')], ['Note', K('Mod+Shift+M')], ['Relationship', K('Mod+Shift+R')],
+        ['Due date', 'Right-click → Set due date'], ['Find & replace', K('Mod+F') + ' → Replace all'],
         ['Boundary', K('Mod+Shift+B')], ['Focus on branch', K('Mod+Shift+F')], ['Find', K('Mod+F')], ['Zoom in / out', K('Mod+= / Mod+-')],
         ['Fit map', K('Mod+0')], ['Toggle outline / format panel', K('Mod+\\ / Mod+Shift+\\')], ['Presentation', 'F5'], ['New / Open / Save', K('Mod+N / O / S')],
         ['Nudge a topic', 'Shift+Alt+arrows'], ['Copy / paste style', K('Mod+Alt+C / Mod+Alt+V')],

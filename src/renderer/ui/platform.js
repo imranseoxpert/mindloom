@@ -34,7 +34,7 @@
   // errors thrown in the main process arrive as "Error invoking remote method 'x': Error: message"
   const cleanErr = (e) => { throw new Error(String((e && e.message) || e).replace(/^Error invoking remote method '[^']+':\s*(Error:\s*)?/, '')); };
 
-  const OPEN_EXT = ['mindloom', 'json', 'md', 'markdown', 'txt', 'opml', 'mm', 'xmind'];
+  const OPEN_EXT = ['mindloom', 'json', 'md', 'markdown', 'txt', 'opml', 'mm', 'xmind', 'csv'];
 
   const P = {
     isElectron: !!bridge,

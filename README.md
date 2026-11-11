@@ -10,8 +10,8 @@ Get the latest installers from the [Releases page](https://github.com/imranseoxp
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon and Intel) | `Mindloom-1.1.0-mac-universal.dmg` |
-| Windows 10/11 (64-bit) | `Mindloom-1.1.0-win-x64.exe` |
+| macOS (Apple Silicon and Intel) | `Mindloom-1.2.0-mac-universal.dmg` |
+| Windows 10/11 (64-bit) | `Mindloom-1.2.0-win-x64.exe` |
 
 The installers are not signed with a paid Apple or Microsoft developer certificate, so each system shows a warning the first time:
 
@@ -28,10 +28,11 @@ The installers are not signed with a paid Apple or Microsoft developer certifica
 - Main topics keep their side when you add or remove others, so the map never reshuffles
 - Select several topics (Shift-click or Shift-drag a rectangle) and move them together; nudge with Shift+Alt+arrows
 - Double-click the canvas for a floating topic; drag a relationship line to reshape its curve
-- Collapse and expand branches, focus on a single branch, sort subtopics
+- Collapse and expand branches, focus on a single branch, sort subtopics A→Z or by due date
 - Copy, cut, paste and duplicate whole branches; paste any indented text as topics
 - Undo and redo, crash-safe auto-save, and the last file reopens on launch
-- Find across topics, notes, labels and links
+- Find across topics, notes, labels, links and due dates — plus find & replace across the whole map
+- Optional automatic numbering (1, 1.1, 1.1.1…) for outline-style maps
 - Outline panel and mini map for large maps
 
 **Structures (9)**
@@ -56,14 +57,15 @@ Mind map, logic chart (left or right), org chart (up or down), tree/outline, tim
 
 - Priority, progress, flag and star markers plus emoji stickers
 - Task checkboxes with a completion count in the status bar
+- Due dates on topics, shown as a 📅 chip that turns red when a task is overdue (the status bar counts overdue topics too)
 - Notes, hyperlinks, labels and images (paste, drop or pick a file)
 - Relationship arrows with labels, and boundaries around a branch
 
 **Files**
 
 - Native `.mindloom` format (plain JSON)
-- Import: XMind (`.xmind`), FreeMind/Freeplane (`.mm`), OPML, Markdown and indented text
-- Export: PNG (optionally transparent), SVG, PDF, Markdown, OPML, FreeMind and plain text
+- Import: XMind (`.xmind`), FreeMind/Freeplane (`.mm`), OPML, Markdown, CSV and indented text
+- Export: PNG (optionally transparent), SVG, PDF, a standalone web page (HTML), Markdown, OPML, FreeMind, CSV for spreadsheets and plain text
 - 12 starter templates, including brainstorm, project plan, SWOT, meeting notes, book summary, weekly planner, org chart, decision, root cause, study notes and goals
 
 ![Template gallery](docs/screenshot-templates.png)

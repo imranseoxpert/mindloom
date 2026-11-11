@@ -393,6 +393,137 @@ test('mind map sides are stable: adding or removing a main topic never moves the
   assert.equal(IO.fromFreeMind(IO.toFreeMind(doc)).root.children.find((c) => c.text === 'T3').side, 'left');
 });
 
+test('due dates: validation, overdue, chip rendering, stats, markdown/OPML round-trip', () => {
+  const { doc, a, b } = sampleDoc();
+  assert.equal(M.isDateStr('2026-02-29'), false, '2026 is not a leap year');
+  assert.equal(M.isDateStr('2024-02-29'), true);
+  assert.equal(M.isDateStr('20 Nov 2026'), false);
+  a.due = '2000-01-05'; // long past, not a task-done topic -> overdue
+  b.due = '2999-12-31';
+  b.task = 'done';
+  assert.equal(M.isOverdue(a), true);
+  assert.equal(M.isOverdue(b), false);
+  assert.equal(M.formatDue('2000-01-05', new Date(2000, 5, 1)), '5 Jan');
+  assert.equal(M.formatDue('2000-01-05', new Date(2001, 5, 1)), '5 Jan 2000');
+  const st = M.stats(doc);
+  assert.equal(st.due, 2);
+  assert.equal(st.overdue, 1);
+  // a hostile due value is dropped by normalizeDoc
+  const bad = M.normalizeDoc({ root: { text: 'R', due: '2026-13-40', children: [{ text: 'C', due: '2026-11-20' }] } });
+  assert.equal(bad.root.due, undefined);
+  assert.equal(bad.root.children[0].due, '2026-11-20');
+  // the chip is measured and drawn with the tags row
+  const L = Lay.layout(doc, ctxFor(doc));
+  const boxA = L.nodes.get(a.id).box;
+  assert.ok(boxA.tags.some((t) => t.kind === 'due' && t.overdue), 'overdue due chip measured');
+  const svg = R.scene(L, doc, { theme: T.getTheme(doc.settings.theme), settings: doc.settings });
+  assert.match(svg, /class="tag due overdue"/);
+  assert.ok(!/NaN|undefined/.test(svg));
+  // round-trips
+  assert.equal(IO.fromMarkdown(IO.toMarkdown(doc)).root.children[0].due, '2000-01-05');
+  assert.equal(IO.fromOPML(IO.toOPML(doc)).root.children[0].due, '2000-01-05');
+  // searching finds a topic by its due date, typed either way
+  assert.ok(M.search(doc, '2000-01-05').includes(a.id));
+  assert.ok(M.search(doc, '5 jan 2000').includes(a.id));
+});
+
+test('find & replace replaces in text and notes, case-insensitively, and reports the count', () => {
+  const { doc, a } = sampleDoc();
+  a.note = 'Alpha plan, alpha budget';
+  a.children[0].text = 'ALPHA one';
+  const n = M.replaceText(doc, 'alpha', 'beta');
+  assert.equal(n, 3);
+  assert.equal(a.note, 'beta plan, beta budget');
+  assert.equal(a.children[0].text, 'beta one');
+  assert.equal(M.replaceText(doc, 'alpha', 'x'), 0, 'nothing left to replace');
+  assert.equal(M.replaceText(doc, '', 'x'), 0, 'empty search is a no-op');
+  assert.equal(M.replaceText(doc, 'BETA', 'g', { caseSensitive: true }), 0, 'case-sensitive misses different case');
+  const m = M.replaceText(doc, 'beta', 'g', { caseSensitive: true });
+  assert.equal(m, 3);
+  // the search text is literal, never a regex
+  const { doc: d2 } = sampleDoc();
+  d2.root.text = 'a.b aXb';
+  assert.equal(M.replaceText(d2, 'a.b', 'z'), 1);
+  assert.equal(d2.root.text, 'z aXb');
+});
+
+test('sortByDue orders dated subtopics first, earliest first', () => {
+  const { doc, a } = sampleDoc();
+  a.children[0].due = '2027-03-01';
+  a.children[1].due = '2026-03-01';
+  const extra = M.addChild(doc, a.id, 'Undated');
+  assert.ok(M.sortByDue(doc, a.id));
+  assert.deepEqual(a.children.map((c) => c.text), ['A2', 'A1', 'Undated']);
+  assert.equal(M.sortByDue(doc, a.id), false, 'already sorted reports no change');
+  assert.ok(extra);
+});
+
+test('CSV export/import round-trips structure, tasks, due dates, labels, links and notes', () => {
+  const { doc, a, b } = sampleDoc();
+  a.task = 'todo'; a.due = '2026-11-20'; a.tags = ['urgent', 'Q3']; a.link = 'https://example.com'; a.note = 'call, then "quote" it';
+  b.task = 'done';
+  const csv = IO.toCSV(doc);
+  assert.match(csv, /^Topic,Path,Depth,Task,Due,Priority,Progress,Labels,Link,Note\r\n/);
+  assert.match(csv, /"call, then ""quote"" it"/, 'CSV quoting');
+  const back = IO.fromCSV(csv);
+  assert.equal(back.root.text, 'Root');
+  assert.deepEqual(back.root.children.map((c) => c.text), ['A', 'B']);
+  assert.deepEqual(back.root.children[0].children.map((c) => c.text), ['A1', 'A2']);
+  const ba = back.root.children[0];
+  assert.equal(ba.task, 'todo');
+  assert.equal(ba.due, '2026-11-20');
+  assert.deepEqual(ba.tags, ['urgent', 'Q3']);
+  assert.equal(ba.link, 'https://example.com');
+  assert.equal(ba.note, 'call, then "quote" it');
+  assert.equal(back.root.children[1].task, 'done');
+  assert.equal(IO.importText('map.csv', csv).root.text, 'Root', 'importText detects .csv');
+  // floating topics round-trip through CSV as their own trees
+  const { doc: d3, b: b3 } = sampleDoc();
+  M.detach(d3, b3.id, 300, 200);
+  const back3 = IO.fromCSV(IO.toCSV(d3));
+  assert.deepEqual(back3.root.children.map((c) => c.text), ['A']);
+  assert.deepEqual(back3.floating.map((f) => f.text), ['B']);
+  assert.equal(back3.floating[0].children[0].text, 'B1');
+  // a foreign CSV with just a Topic column still imports
+  const flat = IO.fromCSV('Topic,Owner\nPlan,Sam\nBuild,Jo\n');
+  assert.equal(flat.root.text, 'Plan');
+  assert.equal(flat.root.children[0].text, 'Build');
+  assert.throws(() => IO.fromCSV('A,B\n1,2\n'), /Topic column/);
+});
+
+test('HTML export is a standalone page with the map SVG and an escaped outline', () => {
+  const { doc, a } = sampleDoc();
+  a.due = '2000-01-05';
+  doc.root.text = 'Root <script>alert(1)</script>';
+  const { svg } = (() => { const L = Lay.layout(doc, ctxFor(doc)); return R.exportSVG(L, doc, { theme: T.getTheme(doc.settings.theme), settings: doc.settings }); })();
+  const html = IO.toHTML(doc, svg);
+  assert.match(html, /^<!doctype html>/);
+  assert.ok(html.includes('<svg'), 'embeds the map');
+  assert.ok(html.includes('Root &lt;script&gt;'), 'title is escaped');
+  assert.ok(!html.includes('<script>alert'), 'no injected script');
+  assert.match(html, /overdue/, 'overdue badge shown');
+  assert.match(html, /6 topics/, 'stats line present');
+});
+
+test('automatic numbering prefixes topics in layout only, never in the document', () => {
+  const { doc, a, b } = sampleDoc();
+  doc.settings.numbering = 'on';
+  const L = Lay.layout(doc, ctxFor(doc));
+  assert.equal(L.nodes.get(a.id).num, '1');
+  assert.equal(L.nodes.get(b.id).num, '2');
+  assert.equal(L.nodes.get(a.children[1].id).num, '1.2');
+  assert.ok(L.nodes.get(a.id).box.lines[0].startsWith('1'), 'number is part of the measured first line');
+  assert.equal(a.text, 'A', 'stored text is untouched');
+  assert.deepEqual(overlaps(L.list), [], 'numbered topics do not overlap');
+  const svg = R.scene(L, doc, { theme: T.getTheme(doc.settings.theme), settings: doc.settings });
+  assert.ok(!/NaN|undefined/.test(svg));
+  doc.settings.numbering = 'off';
+  const L2 = Lay.layout(doc, ctxFor(doc));
+  assert.equal(L2.nodes.get(a.id).num, '');
+  // an unknown numbering value in a file falls back to off
+  assert.equal(M.normalizeDoc({ root: { text: 'R' }, settings: { numbering: 'roman' } }).settings.numbering, 'off');
+});
+
 test('AI: base URL safety, model filtering and answer cleaning', () => {
   const AI = require('../src/main/ai.js');
   assert.equal(AI.validateBaseUrl('https://api.example.com/v1/'), 'https://api.example.com/v1');

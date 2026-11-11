@@ -172,9 +172,11 @@ body.no-minimap #minimap { display: none; }
 
 #searchbar {
   position: absolute; top: 12px; right: 12px; z-index: 6;
-  display: flex; align-items: center; gap: 4px;
+  display: flex; flex-direction: column; gap: 4px;
   background: var(--ui-bg); border: 1px solid var(--ui-border); border-radius: 10px; padding: 5px; box-shadow: var(--ui-shadow);
 }
+.search-row { display: flex; align-items: center; gap: 4px; }
+.search-row .btn { margin-left: auto; padding: 4px 10px; font-size: 12px; }
 #searchbar input { border: 1px solid var(--ui-border); border-radius: 7px; padding: 5px 8px; width: 220px; outline: none; background: var(--ui-bg2); user-select: text; }
 #searchbar input:focus { border-color: var(--ui-accent); }
 #search-count { font-size: 11px; color: var(--ui-fg3); min-width: 40px; text-align: center; }

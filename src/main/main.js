@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 
 const isMac = process.platform === 'darwin';
-const OPEN_EXT = ['mindloom', 'json', 'md', 'markdown', 'txt', 'opml', 'mm', 'xmind'];
+const OPEN_EXT = ['mindloom', 'json', 'md', 'markdown', 'txt', 'opml', 'mm', 'xmind', 'csv'];
 const windows = new Set();
 const state = new WeakMap(); // win -> {dirty, path, title, forceClose, initialPath}
 let pendingOpen = [];
@@ -124,10 +124,11 @@ function buildMenu() {
       c('Save', 'save', 'CmdOrCtrl+S'),
       c('Save As…', 'saveAs', 'CmdOrCtrl+Shift+S'),
       { type: 'separator' },
-      c('Import (Markdown, OPML, XMind, FreeMind, Text)…', 'open'),
+      c('Import (Markdown, OPML, XMind, FreeMind, Text, CSV)…', 'open'),
       { label: 'Export', submenu: [
         c('PNG Image…', 'exportPNG'), c('SVG Vector…', 'exportSVG'), c('PDF Document…', 'exportPDF'), { type: 'separator' },
-        c('Markdown…', 'exportMarkdown'), c('OPML…', 'exportOPML'), c('Plain Text Outline…', 'exportText'), c('FreeMind (.mm)…', 'exportFreeMind'),
+        c('Web Page (.html)…', 'exportHTML'),
+        c('Markdown…', 'exportMarkdown'), c('OPML…', 'exportOPML'), c('Plain Text Outline…', 'exportText'), c('FreeMind (.mm)…', 'exportFreeMind'), c('Spreadsheet (.csv)…', 'exportCSV'),
       ] },
       { type: 'separator' },
       isMac ? { role: 'close' } : { role: 'quit', label: 'Exit' },
@@ -143,6 +144,7 @@ function buildMenu() {
       c('Delete Topic', 'deleteSel', 'Delete'),
       { type: 'separator' },
       c('Find…', 'find', 'CmdOrCtrl+F'),
+      c('Set Due Date…', 'due'),
     ] },
     { label: 'Insert', submenu: [
       c('Subtopic', 'addChild', 'Tab'), c('Topic', 'addSibling', 'Enter'), c('Parent Topic', 'addParent', 'CmdOrCtrl+Enter'),
