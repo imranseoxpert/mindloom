@@ -1,0 +1,58 @@
+name: Release
+
+# Publishing a GitHub Release builds the macOS and Windows installers from that
+# release's tag and uploads them to the release. It can also be run manually
+# (Actions -> Release -> Run workflow) to (re)build installers for an existing tag.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to upload installers to (e.g. v1.2.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+            artifact: 'dist/*.dmg'
+          - os: windows-latest
+            platform: win
+            artifact: 'dist/*.exe'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Build the installer
+        run: npx electron-builder --${{ matrix.platform }} --publish never
+
+      - name: Upload the installer to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: gh release upload "$TAG" ${{ matrix.artifact }} --clobber
