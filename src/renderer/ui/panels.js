@@ -137,7 +137,7 @@
     if (!n || !t) {
       return `<div class="sec"><p class="muted">Select a topic to style it. Use the <b>Map</b> tab for themes, structures and backgrounds.</p></div>
         <div class="sec"><h4>Quick start</h4><p class="muted" style="line-height:1.7">
-        <kbd>Tab</kbd> add subtopic<br/><kbd>Enter</kbd> add topic<br/><kbd>Space</kbd> / <kbd>F2</kbd> edit text<br/>Double-click canvas → floating topic<br/>Drag a topic onto another to move it<br/>Right-click for more actions</p></div>`;
+        <kbd>Tab</kbd> add subtopic<br/><kbd>Enter</kbd> add topic<br/><kbd>Space</kbd> / <kbd>F2</kbd> edit text<br/>Drag a topic anywhere — it stays connected<br/>Drop it onto another topic to re-parent it<br/>Double-click canvas → floating topic<br/>Right-click for more actions</p></div>`;
     }
     const st = t.box.style, ns = n.style || {};
     const f = M.find(App.doc, n.id);
@@ -199,7 +199,7 @@
         ${range('vGap', 'Vertical', s.vGap, 2, 60, 1, '')}
         ${range('maxWidth', 'Topic width', s.maxWidth, 100, 600, 10, '')}
       </div>
-      <div class="sec"><button class="btn" data-clear-styles>Clear all custom topic styles</button></div>`;
+      <div class="sec"><div class="toggle-row"><button class="btn" data-cmd="resetAllPositions">Reset hand-placed topics</button><button class="btn" data-clear-styles>Clear custom topic styles</button></div></div>`;
   }
 
   function markerPreview(m) {
@@ -544,7 +544,8 @@
         ['Task checkbox', K('Mod+Shift+T')], ['Hyperlink', K('Mod+K')], ['Note', K('Mod+Shift+M')], ['Relationship', K('Mod+Shift+R')],
         ['Boundary', K('Mod+Shift+B')], ['Focus on branch', K('Mod+Shift+F')], ['Find', K('Mod+F')], ['Zoom in / out', K('Mod+= / Mod+-')],
         ['Fit map', K('Mod+0')], ['Toggle outline / format panel', K('Mod+\\ / Mod+Shift+\\')], ['Presentation', 'F5'], ['New / Open / Save', K('Mod+N / O / S')],
-        ['Floating topic', 'Double-click canvas'], ['Pan', 'Drag canvas / scroll'], ['Zoom', K('Mod+scroll / pinch')],
+        ['Nudge a topic', 'Shift+Alt+arrows'], ['Copy / paste style', K('Mod+Alt+C / Mod+Alt+V')],
+        ['Floating topic', 'Double-click canvas'], ['Select with a rectangle', 'Shift+drag canvas'], ['Pan', 'Drag canvas / scroll'], ['Zoom', K('Mod+scroll / pinch')],
       ];
       App.modal({
         title: 'Keyboard shortcuts',
@@ -559,76 +560,162 @@
     },
   });
 
-  // ================= AI assistant =================
-  App.commands.ai = async function () {
-    const hasKey = await P.aiKey('has');
-    const n = App.primaryNode();
+  // ================= AI assistant (bring your own key) =================
+  App.commands.ai = async function (preset) {
+    if (!P.isElectron) {
+      App.modal({ title: '✨ AI assistant', cls: 'small', body: '<p>The AI assistant is part of the desktop app for macOS and Windows, where your API keys can be stored securely.</p>' });
+      return;
+    }
+    let cfg = await P.aiConfig();
+    const node = App.primaryNode();
+    const st = { mode: preset === 'expand' && node ? 'expand' : 'generate', depth: 'standard', models: [] };
+    const prov = () => cfg.providers.find((x) => x.id === cfg.provider) || cfg.providers[0];
+    const groups = ['Cloud', 'Local', 'Custom'];
+    const providerOptions = groups.map((g) => `<optgroup label="${g === 'Cloud' ? 'Cloud providers' : g === 'Local' ? 'On your computer' : 'Other'}">${cfg.providers.filter((x) => x.group === g).map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</optgroup>`).join('');
     const body = `
-      ${!P.isElectron ? '<p class="muted">The AI assistant runs in the desktop app.</p>' : ''}
-      <div id="ai-keybox" ${hasKey ? 'hidden' : ''}>
-        <p class="muted">The assistant uses your own Anthropic API key (get one at console.anthropic.com). It is stored encrypted on this computer and only sent to api.anthropic.com.</p>
-        <input class="field" id="ai-key" type="password" placeholder="sk-ant-…"/>
+      <div class="ai-grid">
+        <label>Provider</label><select class="field" id="ai-prov">${providerOptions}</select>
+        <label id="ai-key-label">API key</label><div id="ai-key-row" class="row" style="margin:0"></div>
+        <label id="ai-base-label">Address</label><div id="ai-base-row" class="row" style="margin:0"><input class="field" id="ai-base" spellcheck="false" placeholder="https://api.example.com/v1"/></div>
+        <label>Model</label><div class="row" style="margin:0"><input class="field" id="ai-model" list="ai-model-list" spellcheck="false" placeholder="Model name"/><datalist id="ai-model-list"></datalist><button class="btn" id="ai-load" title="Fetch the models your key can use">Load models</button></div>
       </div>
-      <div class="seg" style="margin:10px 0" data-ai-mode>
-        <button data-val="generate" class="on">Generate a new map</button>
-        <button data-val="expand"${n ? '' : ' disabled'}>Expand selected topic</button>
+      <div class="seg" style="margin:16px 0 10px" data-ai-mode>
+        <button data-val="generate">From a topic</button>
+        <button data-val="text">From my notes</button>
+        <button data-val="expand"${node ? '' : ' disabled title="Select a topic first"'}>Expand selected topic</button>
       </div>
-      <div id="ai-gen"><input class="field" id="ai-topic" placeholder="What should the mind map be about? e.g. Launching a podcast"/></div>
-      <div id="ai-exp" hidden><p class="muted">Suggest subtopics for <b>${esc(n ? n.text || 'Topic' : '')}</b> using the surrounding map as context.</p></div>
-      <div id="ai-status" class="muted" style="margin-top:10px"></div>`;
+      <div data-pane="generate"><input class="field" id="ai-topic" placeholder="What is the map about? e.g. Launching a podcast"/></div>
+      <div data-pane="text" hidden><textarea class="field" id="ai-text" style="min-height:140px" placeholder="Paste notes, an article, a transcript or meeting minutes. The AI turns them into a mind map."></textarea></div>
+      <div data-pane="expand" hidden><p class="muted" style="margin:4px 0">Suggest new subtopics for <b>${esc(node ? node.text || 'Topic' : '')}</b>, using the rest of the map as context.</p></div>
+      <div class="row" id="ai-opts"><label>Detail</label>${'<div class="seg" data-ai-depth><button data-val="quick">Quick</button><button data-val="standard" class="on">Standard</button><button data-val="deep">Deep</button></div>'}</div>
+      <label class="row" id="ai-into-row" style="cursor:pointer"><input type="checkbox" id="ai-into"/> <span>Add to this map instead of starting a new one</span></label>
+      <div id="ai-status" class="muted" style="margin-top:8px;min-height:18px"></div>
+      <p class="muted" id="ai-privacy" style="margin:6px 0 0;font-size:11.5px"></p>`;
     App.modal({
-      title: '✨ AI assistant', cls: 'small', body,
-      foot: `${hasKey ? '<button class="btn" data-forget style="margin-right:auto">Forget API key</button>' : ''}<button class="btn" data-close2>Cancel</button><button class="btn primary" data-go>Generate</button>`,
+      title: '✨ AI assistant', body,
+      foot: '<button class="btn" data-x>Cancel</button><button class="btn primary" data-go>Generate</button>',
       onMount(m, close) {
-        let mode = 'generate';
-        m.querySelector('[data-ai-mode]').addEventListener('click', (e) => {
-          const b = e.target.closest('button');
-          if (!b || b.disabled) return;
-          mode = b.dataset.val;
-          m.querySelectorAll('[data-ai-mode] button').forEach((x) => x.classList.toggle('on', x === b));
-          m.querySelector('#ai-gen').hidden = mode !== 'generate';
-          m.querySelector('#ai-exp').hidden = mode !== 'expand';
-        });
-        m.querySelector('[data-close2]').onclick = () => close();
-        const fg = m.querySelector('[data-forget]');
-        if (fg) fg.onclick = async () => { await P.aiKey('clear'); App.toast('API key removed'); close(); };
-        const topicIn = m.querySelector('#ai-topic');
-        topicIn.focus();
-        const go = async () => {
-          const status = m.querySelector('#ai-status');
+        const $m = (q) => m.querySelector(q);
+        const status = (html, isErr) => { $m('#ai-status').innerHTML = isErr ? `<span style="color:var(--ui-danger)">⚠️ ${esc(html)}</span>` : html; };
+        const refreshCfg = async () => { cfg = await P.aiConfig(); };
+
+        function renderProvider() {
+          const p = prov();
+          $m('#ai-prov').value = p.id;
+          const keyRow = $m('#ai-key-row');
+          if (p.noKey) {
+            keyRow.innerHTML = `<span class="muted">No key needed — it runs on your computer. <a href="#" data-open="${esc(p.keyUrl)}">Get ${esc(p.name.split(' ')[0])}</a></span>`;
+          } else if (p.hasKey) {
+            keyRow.innerHTML = `<span style="color:#2f9e44;font-weight:600">✓ Key saved</span><button class="btn" data-key-replace>Replace</button><button class="btn danger" data-key-remove>Remove</button>`;
+          } else {
+            keyRow.innerHTML = `<input class="field" id="ai-key" type="password" autocomplete="off" spellcheck="false" placeholder="${esc(p.keyHint || 'Paste your API key')}${p.keyOptional ? ' (optional)' : ''}"/><button class="btn" data-key-save>Save</button>${p.keyUrl ? `<a href="#" data-open="${esc(p.keyUrl)}" style="white-space:nowrap">Get a key</a>` : ''}`;
+          }
+          $m('#ai-base-label').hidden = $m('#ai-base-row').hidden = !p.editableBase;
+          $m('#ai-base').value = cfg.baseUrls[p.id] || p.base || '';
+          $m('#ai-model').value = cfg.models[p.id] || p.defaultModel || '';
+          $m('#ai-model-list').innerHTML = '';
+          st.models = [];
+          $m('#ai-privacy').textContent = p.group === 'Local'
+            ? 'Your map stays on this computer: the request goes to the local model server only.'
+            : `Your request is sent straight from this computer to ${p.name}. Keys are stored encrypted on this computer and are never shared with anyone else.`;
+          status('');
+          if (p.noKey || p.hasKey || (p.keyOptional && (cfg.baseUrls[p.id] || p.base))) loadModels(true);
+        }
+
+        async function loadModels(quiet) {
+          const p = prov();
+          if (!quiet) status('<span class="spinner"></span> Loading models…');
           try {
-            const keyIn = m.querySelector('#ai-key');
-            if (keyIn && keyIn.value.trim()) await P.aiKey('set', keyIn.value.trim());
-            if (mode === 'generate' && !topicIn.value.trim()) { topicIn.focus(); return; }
-            status.innerHTML = '<span class="spinner"></span> Thinking…';
-            m.querySelector('[data-go]').disabled = true;
-            const req = mode === 'generate'
-              ? { mode, topic: topicIn.value.trim() }
-              : { mode, topic: n.text, path: M.pathTo(App.doc, n.id).map((x) => x.text), existing: n.children.map((c) => c.text), outline: IO.toText(App.doc).slice(0, 6000) };
+            const list = await P.aiModels(p.id);
+            st.models = list;
+            $m('#ai-model-list').innerHTML = list.map((x) => `<option value="${esc(x.id)}">${esc(x.name && x.name !== x.id ? x.name : '')}</option>`).join('');
+            const cur = $m('#ai-model').value.trim();
+            if (!cur && list.length) { $m('#ai-model').value = list[0].id; await P.aiSetConfig({ for: p.id, model: list[0].id }); }
+            status(list.length ? `${list.length} models available${cur && !list.some((x) => x.id === cur) ? ' — the current model is not in the list, but you can still use it' : ''}.` : 'The provider returned no chat models. You can type a model name.');
+          } catch (err) { if (!quiet) status(err.message, true); else status(''); }
+        }
+
+        $m('#ai-prov').addEventListener('change', async (e) => { await P.aiSetConfig({ provider: e.target.value }); await refreshCfg(); renderProvider(); });
+        $m('#ai-base').addEventListener('change', async (e) => {
+          try { await P.aiSetConfig({ for: prov().id, baseUrl: e.target.value }); await refreshCfg(); status('Address saved.'); loadModels(true); } catch (err) { status(err.message, true); }
+        });
+        $m('#ai-model').addEventListener('change', (e) => P.aiSetConfig({ for: prov().id, model: e.target.value }));
+        $m('#ai-load').onclick = () => loadModels(false);
+        const saveKey = async () => {
+          const inp = $m('#ai-key');
+          if (!inp || !inp.value.trim()) return true;
+          try { await P.aiSetKey(prov().id, inp.value.trim()); await refreshCfg(); renderProvider(); status('Key saved securely.'); return true; } catch (err) { status(err.message, true); return false; }
+        };
+        m.addEventListener('click', async (e) => {
+          const o = e.target.closest('[data-open]');
+          if (o) { e.preventDefault(); P.openExternal(o.dataset.open); return; }
+          if (e.target.closest('[data-key-save]')) { await saveKey(); return; }
+          if (e.target.closest('[data-key-replace]')) { const p = prov(); p.hasKey = false; renderProvider(); setTimeout(() => $m('#ai-key') && $m('#ai-key').focus(), 0); return; }
+          if (e.target.closest('[data-key-remove]')) { await P.aiClearKey(prov().id); await refreshCfg(); renderProvider(); status('Key removed from this computer.'); }
+        });
+        m.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.id === 'ai-key') { e.preventDefault(); saveKey(); } });
+
+        const setMode = (mode) => {
+          st.mode = mode;
+          m.querySelectorAll('[data-ai-mode] button').forEach((x) => x.classList.toggle('on', x.dataset.val === mode));
+          m.querySelectorAll('[data-pane]').forEach((x) => { x.hidden = x.dataset.pane !== mode; });
+          $m('#ai-opts').hidden = mode === 'expand';
+          $m('#ai-into-row').hidden = mode === 'expand';
+          $m('[data-go]').textContent = mode === 'expand' ? 'Suggest subtopics' : 'Generate map';
+          const f = mode === 'generate' ? $m('#ai-topic') : mode === 'text' ? $m('#ai-text') : null;
+          if (f) setTimeout(() => f.focus(), 0);
+        };
+        m.querySelector('[data-ai-mode]').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b && !b.disabled) setMode(b.dataset.val); });
+        m.querySelector('[data-ai-depth]').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; st.depth = b.dataset.val; m.querySelectorAll('[data-ai-depth] button').forEach((x) => x.classList.toggle('on', x === b)); });
+        $m('[data-x]').onclick = () => close();
+
+        async function go() {
+          const p = prov();
+          if (!(await saveKey())) return;
+          if (!p.noKey && !p.keyOptional && !prov().hasKey) { status(`Paste your ${p.name} API key first.`, true); return; }
+          const model = $m('#ai-model').value.trim();
+          if (!model) { status('Choose a model first (press “Load models”).', true); return; }
+          const req = { provider: p.id, model, mode: st.mode, depth: st.depth };
+          if (st.mode === 'generate') { req.topic = $m('#ai-topic').value.trim(); if (!req.topic) { $m('#ai-topic').focus(); return; } }
+          if (st.mode === 'text') { req.text = $m('#ai-text').value.trim(); if (req.text.length < 20) { status('Paste a bit more text (at least a sentence or two).', true); return; } }
+          if (st.mode === 'expand') Object.assign(req, { topic: node.text, path: M.pathTo(App.doc, node.id).map((x) => x.text), existing: node.children.map((c) => c.text), outline: IO.toText(App.doc).slice(0, 6000) });
+          const btn = $m('[data-go]');
+          btn.disabled = true;
+          status(`<span class="spinner"></span> Asking ${esc(p.name)} (${esc(model)})…`);
+          try {
             const res = await P.ai(req);
-            if (mode === 'generate') {
-              close();
-              if (!(await App.confirmDiscard())) return;
-              const d = IO.fromText(res.outline);
-              d.settings = Object.assign(d.settings, { theme: App.doc.settings.theme, layout: App.doc.settings.layout, lineStyle: App.doc.settings.lineStyle, shapes: App.doc.settings.shapes, pattern: App.doc.settings.pattern });
-              App.setDoc(d, { dirty: true });
-              App.toast('Map generated — edit anything you like');
-            } else {
-              const roots = IO.parseIndented(res.outline);
-              const added = roots.map((r) => M.insertSubtree(App.doc, n.id, r)).filter(Boolean);
-              close();
+            const into = $m('#ai-into').checked;
+            close();
+            if (st.mode === 'expand') {
+              const added = IO.parseIndented(res.outline).map((r) => M.insertSubtree(App.doc, node.id, r)).filter(Boolean);
+              App.sel = [node.id];
+              App.commit();
+              App.toast(`Added ${added.length} subtopic${added.length === 1 ? '' : 's'}`);
+              return;
+            }
+            const d = IO.fromText(res.outline);
+            if (into) {
+              const target = App.primary() || App.doc.root.id;
+              const n = M.insertSubtree(App.doc, target, d.root);
               App.sel = [n.id];
               App.commit();
-              App.toast(`Added ${added.length} subtopics`);
+              App.toast('Added the generated branch to your map');
+              return;
             }
+            if (!(await App.confirmDiscard())) return;
+            const keep = ['theme', 'layout', 'lineStyle', 'shapes', 'pattern', 'font', 'rainbow'];
+            for (const k of keep) d.settings[k] = M.clone(App.doc.settings[k]);
+            App.setDoc(d, { dirty: true });
+            App.toast('Map generated — edit anything you like');
           } catch (err) {
-            m.querySelector('[data-go]').disabled = false;
-            status.textContent = '⚠️ ' + (err && err.message ? err.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : 'Request failed');
-            if (/key/i.test(status.textContent)) m.querySelector('#ai-keybox').hidden = false;
+            btn.disabled = false;
+            status(err.message || 'The request failed.', true);
           }
-        };
-        m.querySelector('[data-go]').onclick = go;
-        topicIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+        }
+        $m('[data-go]').onclick = go;
+        $m('#ai-topic').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
+        renderProvider();
+        setMode(st.mode);
       },
     });
   };

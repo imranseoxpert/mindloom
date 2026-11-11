@@ -123,9 +123,9 @@
   let autosaveT;
   function scheduleAutosave() {
     clearTimeout(autosaveT);
-    autosaveT = setTimeout(() => {
-      const ok = P.store.set('autosave', { doc: App.doc, path: App.path, name: App.name, dirty: App.dirty, t: Date.now() });
-      $('#st-save').textContent = ok ? 'Auto-saved ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Auto-save unavailable (map too large)';
+    autosaveT = setTimeout(async () => {
+      const ok = await P.autosave({ doc: App.doc, path: App.path, name: App.name, dirty: App.dirty, t: Date.now() });
+      $('#st-save').textContent = ok ? 'Auto-saved ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Auto-save unavailable (map too large) — save the file to keep your work';
     }, 700);
   }
 
@@ -134,13 +134,15 @@
     const theme = App.theme();
     const s = App.doc.settings;
     App.L = Lay.layout(App.doc, { theme, settings: s, measure, focusId: App.focusId });
+    // remember which side each main topic is on, so later edits never reshuffle the map
+    if (s.layout === 'mindmap' && !App.focusId) for (const c of App.L.root.children) if (!c.node.side && c.side) c.node.side = c.side;
     vp.innerHTML = R.scene(App.L, App.doc, {
       theme, settings: s, selected: new Set(App.sel), matches: new Set(App.matches), selectedRel: App.selRel,
     });
     for (const id of App.sel) { const g = vp.querySelector(`.node[data-id="${id}"]`); if (g) g.classList.add('sel'); }
     stage.style.backgroundColor = theme.bg;
     applyView();
-    App.emit('render');
+    if (!App.dragging) App.emit('render');
   }
   App.render = render;
 
@@ -166,23 +168,33 @@
   }
   App.toWorld = toWorld;
 
-  let anim = null;
+  let anim = null, animTarget = null;
   function animateView(target, ms) {
     cancelAnimationFrame(anim);
     const from = Object.assign({}, App.view);
     const t0 = performance.now();
     const dur = ms == null ? 260 : ms;
+    animTarget = null;
     if (!dur) { Object.assign(App.view, target); applyView(); return; }
+    animTarget = Object.assign({}, target);
     const step = (now) => {
       const k = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - k, 3);
       App.view.x = from.x + (target.x - from.x) * e;
       App.view.y = from.y + (target.y - from.y) * e;
       App.view.zoom = from.zoom + (target.zoom - from.zoom) * e;
       applyView();
-      if (k < 1) anim = requestAnimationFrame(step);
+      if (k < 1) anim = requestAnimationFrame(step); else animTarget = null;
     };
     anim = requestAnimationFrame(step);
   }
+  /** Finish any running view animation now, so the map never slides under the pointer. */
+  App.settleView = function () {
+    if (!animTarget) return;
+    cancelAnimationFrame(anim);
+    Object.assign(App.view, animTarget);
+    animTarget = null;
+    applyView();
+  };
 
   App.fitBox = function (b, animate, maxZoom, pad) {
     const r = stageRect();
@@ -322,6 +334,11 @@
       if (App.focusId === id) return App.commands.addChild();
       const parentId = f.parent ? f.parent.id : id;
       const n = M.addSibling(App.doc, id, f.parent ? defaultText(parentId) : f.floating ? 'Floating Topic' : 'Main Topic', before === true);
+      if (f.floating && !f.parent) {
+        // a new floating topic goes just below the whole branch of the one it was created from
+        const t = App.L.nodes.get(id);
+        if (t) { const b = Lay.subtreeBox(t); n.x = Math.round(t.x); n.y = Math.round(b.maxY + 30); }
+      }
       afterCreate(n);
     },
     addParent() {
@@ -367,6 +384,35 @@
       if (!n || n.children.length < 2) return;
       n.children.sort((a, b) => a.text.localeCompare(b.text, undefined, { numeric: true, sensitivity: 'base' }));
       App.commit();
+    },
+    resetPosition() {
+      let n = 0;
+      for (const node of App.selectedNodes()) if (node.offset) { delete node.offset; n++; }
+      if (n) App.commit({ noScroll: true }); else toast('That topic is already in its automatic position.');
+    },
+    resetAllPositions() {
+      let n = 0;
+      M.walkDoc(App.doc, (node) => { if (node.offset) { delete node.offset; n++; } });
+      if (n) { App.commit({ noScroll: true }); toast(`Reset ${n} hand-placed topic${n > 1 ? 's' : ''}`); App.fit(); }
+      else toast('No topics have been moved by hand.');
+    },
+    nudge(dir) {
+      const key = App.doc.settings.layout;
+      const step = 10;
+      const dx = dir === 'left' ? -step : dir === 'right' ? step : 0, dy = dir === 'up' ? -step : dir === 'down' ? step : 0;
+      let moved = false;
+      for (const id of topLevelOf(App.sel)) {
+        const f = M.find(App.doc, id);
+        if (!f || (!f.parent && !f.floating) || id === App.focusId) continue;
+        if (f.floating && !f.parent) { f.node.x = (f.node.x || 0) + dx; f.node.y = (f.node.y || 0) + dy; moved = true; continue; }
+        const k = f.floating ? 'float' : key;
+        if (!f.floating && !Lay.canFreePosition(key, f.depth)) continue;
+        const o = f.node.offset && f.node.offset.l === k ? f.node.offset : { x: 0, y: 0 };
+        const nx = o.x + dx, ny = o.y + dy;
+        if (!nx && !ny) delete f.node.offset; else f.node.offset = { x: nx, y: ny, l: k };
+        moved = true;
+      }
+      if (moved) App.commit();
     },
     detach() {
       const id = App.primary();
@@ -564,6 +610,7 @@
       if (k === '=' || k === '+') return handled('zoomIn');
       if (k === '-' || k === '_') return handled('zoomOut');
       if (k === '0' || e.code === 'Digit0') return handled('fit');
+      if (e.altKey && (e.code === 'KeyC' || e.code === 'KeyV')) return handled(e.code === 'KeyC' ? 'copyStyle' : 'pasteStyle');
       if (k === 'd') return handled('duplicate');
       if (k === 'b' && !e.shiftKey) return handled('toggleStyle', 'bold');
       if (k === 'b' && e.shiftKey) return handled('boundary');
@@ -582,6 +629,7 @@
       if (key === 'ArrowDown') return handled('moveDown');
       return;
     }
+    if (e.altKey && e.shiftKey && key.startsWith('Arrow')) return handled('nudge', key.slice(5).toLowerCase());
     if (e.altKey) {
       if (key === 'ArrowUp') return handled('moveUp');
       if (key === 'ArrowDown') return handled('moveDown');
@@ -600,6 +648,7 @@
       case 'F1': return handled('shortcuts');
       case 'Escape':
         e.preventDefault();
+        if (drag) return App.cancelDrag();
         if (App.mode) return exitMode();
         if (!$('#searchbar').hidden) return closeSearch();
         if (App.selRel) { App.selRel = null; return render(); }
@@ -646,6 +695,7 @@
 
   function onPointerDown(e) {
     if (e.target === editor) return;
+    App.settleView();
     if (App.editing) App.commitEdit();
     hideMenu();
     if (e.button === 2) return;
@@ -679,24 +729,97 @@
       }
     }
     if (relEl && !id) {
-      App.selRel = relEl.getAttribute('data-rel');
-      App.sel = [];
-      render();
-      App.emit('select');
+      const rid = relEl.getAttribute('data-rel');
+      if (App.selRel !== rid) { App.selRel = rid; App.sel = []; render(); App.emit('select'); }
+      relDrag = { id: rid, sx: e.clientX, sy: e.clientY, moved: false };
+      try { stage.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
       return;
     }
     if (id) {
       if (e.shiftKey || e.metaKey || e.ctrlKey) { App.select(id, { toggle: true, noScroll: true }); return; }
-      if (!App.sel.includes(id) || App.sel.length > 1 || App.selRel) App.select(id, { noScroll: true });
-      drag = { id, sx: e.clientX, sy: e.clientY, started: false, pointerId: e.pointerId };
+      // pressing on a topic of a multi-selection keeps the selection (so the group can be dragged);
+      // a plain click without dragging narrows it to that topic on release
+      const inMulti = App.sel.includes(id) && App.sel.length > 1;
+      if (!inMulti && (!App.sel.includes(id) || App.selRel)) App.select(id, { noScroll: true });
+      drag = { id, sx: e.clientX, sy: e.clientY, started: false, pointerId: e.pointerId, narrowOnClick: inMulti };
       return;
     }
-    // empty canvas → pan
+    // empty canvas: Shift + drag selects with a rectangle, plain drag pans
+    if (e.shiftKey && e.button === 0) {
+      marquee = { sx: e.clientX, sy: e.clientY, base: App.sel.slice(), box: null };
+      try { stage.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+      return;
+    }
     pan = { sx: e.clientX, sy: e.clientY, vx: App.view.x, vy: App.view.y, moved: false };
   }
 
   function subtreeIds(id) { const n = M.getNode(App.doc, id); return n ? [...collect(n)] : []; }
   function collect(n, s = new Set()) { s.add(n.id); n.children.forEach((c) => collect(c, s)); return s; }
+
+  // ---- dragging topics ----
+  // Dropping on a topic re-parents (centre) or reorders (top/bottom edge). Dropping on empty canvas keeps the
+  // topic attached to its parent and just moves it (and its branch) there — like XMind's free positioning.
+  // A level-1 topic dragged across the central topic switches sides. Close to its home slot it snaps back.
+  const SNAP = 10;
+  let dragFrame = 0;
+
+  function topLevelOf(ids) { return ids.filter((id) => !ids.some((o) => o !== id && M.isAncestor(App.doc, o, id))); }
+
+  function beginDrag(e) {
+    const doc = App.doc;
+    drag.started = true;
+    try { stage.setPointerCapture(e.pointerId); } catch (err) { /* pointer already released */ }
+    const ids = App.sel.includes(drag.id) && App.sel.length > 1 ? topLevelOf(App.sel) : [drag.id];
+    drag.ids = ids.filter((id) => !App.isRoot(id) && id !== App.focusId && M.find(doc, id));
+    drag.exclude = new Set();
+    for (const id of drag.ids) for (const sid of subtreeIds(id)) drag.exclude.add(sid);
+    drag.key = App.doc.settings.layout;
+    drag.orig = new Map();
+    for (const id of drag.ids) {
+      const f = M.find(doc, id), n = f.node;
+      drag.orig.set(id, { floatingRoot: f.floating && !f.parent, x: n.x, y: n.y, offset: n.offset ? Object.assign({}, n.offset) : null, depth: f.depth + (f.floating ? 1 : 0) });
+    }
+    const t = App.L.nodes.get(drag.id);
+    drag.t0 = { x: t.x, y: t.y, w: t.w, h: t.h };
+    // where the primary topic would sit without its own manual offset
+    const home = Lay.layout(doc, { theme: App.theme(), settings: doc.settings, measure, focusId: App.focusId, ignoreOffsetId: drag.id }).nodes.get(drag.id);
+    drag.home = home ? { x: home.x, y: home.y, w: home.w, h: home.h } : null;
+    drag.origJSON = snapshot();
+    App.dragging = true;
+    stage.classList.add('dragging-topic');
+  }
+
+  function canFree(id, d) {
+    d = d || drag;
+    const o = d && d.orig.get(id);
+    if (!o) return false;
+    if (o.floatingRoot) return true;
+    const f = M.find(App.doc, id);
+    if (f && f.floating) return true; // inside a floating tree: uses the logic-chart rules
+    return Lay.canFreePosition(d.key, o.depth);
+  }
+
+  function applyDragDelta(dx, dy) {
+    const doc = App.doc;
+    drag.snapped = false;
+    for (const id of drag.ids) {
+      const o = drag.orig.get(id), n = M.getNode(doc, id);
+      if (!n) continue;
+      if (o.floatingRoot) { n.x = Math.round((o.x || 0) + dx); n.y = Math.round((o.y || 0) + dy); continue; }
+      if (!canFree(id)) continue;
+      const f = M.find(doc, id);
+      const key = f.floating ? 'float' : drag.key;
+      const base = o.offset && o.offset.l === key ? o.offset : { x: 0, y: 0 };
+      let ox = base.x + dx, oy = base.y + dy;
+      if (id === drag.id && drag.home && drag.ids.length === 1) {
+        // distance between where the topic would land and its home slot
+        const lx = drag.t0.x + dx - drag.home.x, ly = drag.t0.y + dy - drag.home.y;
+        if (Math.abs(lx) < SNAP && Math.abs(ly) < SNAP) { ox -= lx; oy -= ly; drag.snapped = true; }
+      }
+      if (Math.abs(ox) < 0.5 && Math.abs(oy) < 0.5) delete n.offset;
+      else n.offset = { x: Math.round(ox), y: Math.round(oy), l: key };
+    }
+  }
 
   function onPointerMove(e) {
     if (pan) {
@@ -711,67 +834,199 @@
       applyView();
       return;
     }
+    if (marquee) { updateMarquee(e); return; }
+    if (relDrag) { updateRelDrag(e); return; }
     if (!drag) return;
-    const dist = Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy);
     if (!drag.started) {
-      if (dist < 6) return;
+      if (Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 5) return;
       if (App.isRoot(drag.id) || drag.id === App.focusId) { drag = null; return; }
-      drag.started = true;
-      try { stage.setPointerCapture(e.pointerId); } catch (err) { /* pointer already released */ }
-      drag.exclude = new Set(subtreeIds(drag.id));
-      for (const sid of drag.exclude) { const g = vp.querySelector(`.node[data-id="${sid}"]`); if (g) g.classList.add('dragging'); }
-      const t = App.L.nodes.get(drag.id);
-      drag.t = t;
-      drag.ghost = vp.querySelector(`.node[data-id="${drag.id}"]`).cloneNode(true);
-      drag.ghost.classList.remove('dragging');
-      drag.ghost.setAttribute('opacity', '0.8');
-      dragLayer.innerHTML = '';
-      dragLayer.appendChild(drag.ghost);
-      drag.hint = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-      drag.hint.setAttribute('class', 'drop-hint');
-      dragLayer.appendChild(drag.hint);
+      beginDrag(e);
+      if (!drag.ids.length) { drag = null; App.dragging = false; return; }
     }
-    const w = toWorld(e.clientX, e.clientY);
-    const start = toWorld(drag.sx, drag.sy);
-    const t = drag.t;
-    drag.ghost.setAttribute('transform', `translate(${t.x + w.x - start.x} ${t.y + w.y - start.y})`);
+    drag.cx = e.clientX; drag.cy = e.clientY;
+    if (!dragFrame) dragFrame = requestAnimationFrame(dragStep);
+  }
+
+  function dragStep() {
+    dragFrame = 0;
+    if (!drag || !drag.started) return;
+    const w = toWorld(drag.cx, drag.cy), start = toWorld(drag.sx, drag.sy);
+    const dx = w.x - start.x, dy = w.y - start.y;
+    drag.world = w; drag.dx = dx; drag.dy = dy;
+    // find a drop target using the positions from before this frame's move
     drag.drop = findDrop(w);
-    drag.world = w;
-    drawDropHint(drag.drop);
+    drag.flip = !drag.drop ? sideFlip(w) : null;
+    applyDragDelta(dx, dy);
+    render();
+    for (const id of drag.exclude) { const g = vp.querySelector(`.node[data-id="${id}"]`); if (g) g.classList.add('dragging'); }
+    drawDragHints();
+  }
+
+  /** Level-1 topic of the mind map dragged to the other side of the central topic. */
+  function sideFlip(w) {
+    if (drag.key !== 'mindmap' || App.focusId || drag.ids.length !== 1) return null;
+    const f = M.find(App.doc, drag.id);
+    if (!f || f.floating || f.depth !== 1) return null;
+    const r = App.L.nodes.get(App.doc.root.id);
+    const cur = (App.L.nodes.get(drag.id) || {}).side || f.node.side;
+    const side = w.x < r.x + r.w / 2 ? 'left' : 'right';
+    return side !== cur ? side : null;
   }
 
   function findDrop(w) {
     const lay = App.doc.settings.layout;
+    let best = null;
     for (const t of App.L.list) {
       if (drag.exclude.has(t.id)) continue;
-      if (w.x < t.x - 8 || w.x > t.x + t.w + 8 || w.y < t.y - 8 || w.y > t.y + t.h + 8) continue;
-      const f = M.find(App.doc, t.id);
-      const isTreeRoot = !f.parent;
-      if (isTreeRoot || t.id === App.focusId) {
-        const side = lay === 'mindmap' && t.id === App.doc.root.id ? (w.x < t.x + t.w / 2 ? 'left' : 'right') : null;
-        return { type: 'child', t, side };
-      }
-      const vertical = t.dir === 'd' || t.dir === 'u' || (t.depth === 1 && (lay === 'down' || lay === 'up' || lay === 'timeline'));
-      const rel = vertical ? (w.x - t.x) / t.w : (w.y - t.y) / t.h;
-      if (rel < 0.28) return { type: 'before', t, vertical };
-      if (rel > 0.72) return { type: 'after', t, vertical };
-      return { type: 'child', t };
+      if (w.x < t.x - 6 || w.x > t.x + t.w + 6 || w.y < t.y - 6 || w.y > t.y + t.h + 6) continue;
+      // the smallest box under the pointer wins (topics can overlap when hand-placed)
+      if (best && best.w * best.h < t.w * t.h) continue;
+      best = t;
     }
-    return null;
+    if (!best) return null;
+    const t = best;
+    const f = M.find(App.doc, t.id);
+    if (!f.parent || t.id === App.focusId) {
+      const side = lay === 'mindmap' && t.id === App.doc.root.id && !App.focusId ? (w.x < t.x + t.w / 2 ? 'left' : 'right') : null;
+      return { type: 'child', t, side };
+    }
+    const vertical = t.dir === 'd' || t.dir === 'u' || (t.depth === 1 && (lay === 'down' || lay === 'up' || lay === 'timeline'));
+    const rel = vertical ? (w.x - t.x) / t.w : (w.y - t.y) / t.h;
+    if (rel < 0.25) return { type: 'before', t, vertical };
+    if (rel > 0.75) return { type: 'after', t, vertical };
+    return { type: 'child', t };
   }
 
-  function drawDropHint(d) {
-    if (!drag.hint) return;
-    if (!d) { drag.hint.innerHTML = ''; return; }
-    const t = d.t, c = '#3b82f6';
-    if (d.type === 'child') drag.hint.innerHTML = `<rect x="${t.x - 6}" y="${t.y - 6}" width="${t.w + 12}" height="${t.h + 12}" rx="10" fill="${c}" fill-opacity="0.12" stroke="${c}" stroke-width="2.5" stroke-dasharray="6 4"/>`;
-    else if (d.vertical) {
-      const x = d.type === 'before' ? t.x - 8 : t.x + t.w + 8;
-      drag.hint.innerHTML = `<path d="M${x} ${t.y - 4} V${t.y + t.h + 4}" stroke="${c}" stroke-width="4" stroke-linecap="round"/>`;
-    } else {
-      const y = d.type === 'before' ? t.y - 7 : t.y + t.h + 7;
-      drag.hint.innerHTML = `<path d="M${t.x - 4} ${y} H${t.x + t.w + 4}" stroke="${c}" stroke-width="4" stroke-linecap="round"/>`;
+  function drawDragHints() {
+    const c = '#3b82f6';
+    let h = '';
+    const d = drag.drop;
+    if (drag.home && !d && drag.ids.length === 1 && canFree(drag.id) && !drag.orig.get(drag.id).floatingRoot) {
+      const hm = drag.home;
+      h += `<rect x="${hm.x - 3}" y="${hm.y - 3}" width="${hm.w + 6}" height="${hm.h + 6}" rx="9" fill="none" stroke="${c}" stroke-opacity="${drag.snapped ? 0.9 : 0.35}" stroke-width="${drag.snapped ? 2.5 : 1.5}" stroke-dasharray="5 4"/>`;
     }
+    if (d) {
+      const t = d.t;
+      if (d.type === 'child') h += `<rect x="${t.x - 6}" y="${t.y - 6}" width="${t.w + 12}" height="${t.h + 12}" rx="10" fill="${c}" fill-opacity="0.12" stroke="${c}" stroke-width="2.5" stroke-dasharray="6 4"/>`;
+      else if (d.vertical) { const x = d.type === 'before' ? t.x - 8 : t.x + t.w + 8; h += `<path d="M${x} ${t.y - 4} V${t.y + t.h + 4}" stroke="${c}" stroke-width="4" stroke-linecap="round"/>`; }
+      else { const y = d.type === 'before' ? t.y - 7 : t.y + t.h + 7; h += `<path d="M${t.x - 4} ${y} H${t.x + t.w + 4}" stroke="${c}" stroke-width="4" stroke-linecap="round"/>`; }
+    } else if (drag.flip) {
+      const r = App.L.nodes.get(App.doc.root.id);
+      const x = drag.flip === 'left' ? r.x - 14 : r.x + r.w + 14;
+      h += `<path d="M${x} ${r.y - 10} V${r.y + r.h + 10}" stroke="${c}" stroke-width="4" stroke-linecap="round"/>`;
+    }
+    dragLayer.innerHTML = `<g class="drop-hint">${h}</g>`;
+  }
+
+  function endDrag(cancel) {
+    const d = drag;
+    drag = null;
+    cancelAnimationFrame(dragFrame); dragFrame = 0;
+    App.dragging = false;
+    stage.classList.remove('dragging-topic');
+    dragLayer.innerHTML = '';
+    if (!d || !d.started) return;
+    if (cancel) { App.doc = JSON.parse(d.origJSON); render(); return; }
+    // run the last frame so the drop uses the final pointer position
+    if (d.cx != null) { drag = d; dragStep(); drag = null; dragLayer.innerHTML = ''; App.dragging = false; }
+    const doc = App.doc;
+    const restoreOffsets = () => {
+      for (const id of d.ids) {
+        const o = d.orig.get(id), n = M.getNode(doc, id);
+        if (!n) continue;
+        if (o.floatingRoot) { n.x = o.x; n.y = o.y; }
+        if (o.offset) n.offset = Object.assign({}, o.offset); else delete n.offset;
+      }
+    };
+    let changed = false;
+    if (d.drop) {
+      restoreOffsets();
+      const t = d.drop.t;
+      if (d.drop.type === 'child') {
+        for (const id of d.ids) {
+          if (M.move(doc, id, t.id)) {
+            changed = true;
+            const n = M.getNode(doc, id);
+            if (d.drop.side) n.side = d.drop.side; else delete n.side;
+          }
+        }
+      } else {
+        for (const id of (d.drop.type === 'after' ? d.ids.slice().reverse() : d.ids)) {
+          const f = M.find(doc, id), tf = M.find(doc, t.id);
+          if (!tf || !tf.parent) break;
+          let idx = tf.index + (d.drop.type === 'after' ? 1 : 0);
+          if (f.parent && f.parent.id === tf.parent.id && f.index < idx) idx--;
+          if (M.move(doc, id, tf.parent.id, idx)) {
+            changed = true;
+            const n = M.getNode(doc, id);
+            if (tf.node.side) n.side = tf.node.side; else delete n.side;
+          }
+        }
+      }
+    } else if (d.flip) {
+      restoreOffsets();
+      const n = M.getNode(doc, d.id);
+      // place it among the topics of its new side by height
+      const kids = doc.root.children.filter((c) => c !== n);
+      const visual = (side) => {
+        const arr = kids.filter((c) => (c.side || 'right') === side).map((c) => ({ c, t: App.L.nodes.get(c.id) }));
+        return side === 'left' ? arr.reverse() : arr; // left side is stacked bottom-up
+      };
+      const rightV = visual('right'), leftV = visual('left');
+      const target = d.flip === 'left' ? leftV : rightV;
+      let at = target.findIndex((v) => v.t && d.world.y < v.t.y + v.t.h / 2);
+      if (at < 0) at = target.length;
+      target.splice(at, 0, { c: n });
+      n.side = d.flip;
+      delete n.offset;
+      doc.root.children = rightV.map((v) => v.c).concat(leftV.reverse().map((v) => v.c));
+      changed = true;
+    } else {
+      const free = d.ids.some((id) => canFree(id, d));
+      if (!free) {
+        restoreOffsets();
+        const name = (ML.themes.LAYOUTS.find((l) => l.id === d.key) || {}).name || d.key;
+        toast(d.key === 'timeline' ? 'Timeline topics stay on the axis. Drop onto a topic to move it, or drag a subtopic freely.' : `Free positioning isn't available in ${name}. Drop onto a topic to move it there.`, 3200);
+      }
+      changed = snapshot() !== d.origJSON;
+    }
+    if (changed) App.commit({ noScroll: true }); else render();
+    App.emit('select');
+  }
+
+  // ---- marquee selection (Shift + drag on empty canvas) ----
+  let marquee = null;
+  function updateMarquee(e) {
+    const a = toWorld(marquee.sx, marquee.sy), b = toWorld(e.clientX, e.clientY);
+    marquee.box = { x1: Math.min(a.x, b.x), y1: Math.min(a.y, b.y), x2: Math.max(a.x, b.x), y2: Math.max(a.y, b.y) };
+    const m = marquee.box;
+    dragLayer.innerHTML = `<rect x="${m.x1}" y="${m.y1}" width="${m.x2 - m.x1}" height="${m.y2 - m.y1}" fill="#3b82f6" fill-opacity="0.08" stroke="#3b82f6" stroke-width="${1.2 / App.view.zoom}" stroke-dasharray="${4 / App.view.zoom} ${3 / App.view.zoom}"/>`;
+  }
+  function endMarquee() {
+    const m = marquee.box;
+    const base = marquee.base;
+    marquee = null;
+    dragLayer.innerHTML = '';
+    if (!m) return;
+    const hit = App.L.list.filter((t) => t.x < m.x2 && t.x + t.w > m.x1 && t.y < m.y2 && t.y + t.h > m.y1).map((t) => t.id);
+    App.select([...new Set(base.concat(hit))], { noScroll: true });
+  }
+
+  // ---- reshaping relationship curves ----
+  let relDrag = null;
+  function updateRelDrag(e) {
+    const r = App.doc.relations.find((x) => x.id === relDrag.id);
+    const a = App.L.nodes.get(r && r.from), b = App.L.nodes.get(r && r.to);
+    if (!r || !a || !b) return;
+    if (!relDrag.moved && Math.hypot(e.clientX - relDrag.sx, e.clientY - relDrag.sy) < 4) return;
+    relDrag.moved = true;
+    const w = toWorld(e.clientX, e.clientY);
+    const ax = a.x + a.w / 2, ay = a.y + a.h / 2, bx = b.x + b.w / 2, by = b.y + b.h / 2;
+    const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len, ny = dx / len;
+    // the curve's middle sits 0.75 × bend away from the chord
+    r.bend = Math.round(((w.x - (ax + bx) / 2) * nx + (w.y - (ay + by) / 2) * ny) / 0.75);
+    if (!dragFrame) dragFrame = requestAnimationFrame(() => { dragFrame = 0; render(); });
   }
 
   function onPointerUp(e) {
@@ -781,41 +1036,22 @@
       pan = null;
       return;
     }
-    if (!drag) return;
-    const d = drag;
-    drag = null;
-    dragLayer.innerHTML = '';
-    if (!d.started) return;
-    const doc = App.doc;
-    const f = M.find(doc, d.id);
-    let ok = false;
-    if (d.drop) {
-      const t = d.drop.t;
-      if (d.drop.type === 'child') {
-        ok = M.move(doc, d.id, t.id);
-        if (ok) { const n = M.getNode(doc, d.id); if (d.drop.side) n.side = d.drop.side; else delete n.side; }
-      } else {
-        const tf = M.find(doc, t.id);
-        let idx = tf.index + (d.drop.type === 'after' ? 1 : 0);
-        if (f.parent && f.parent.id === tf.parent.id && f.index < idx) idx--;
-        ok = M.move(doc, d.id, tf.parent.id, idx);
-        if (ok) { const n = M.getNode(doc, d.id); if (tf.node.side) n.side = tf.node.side; else delete n.side; }
-      }
-    } else {
-      const start = toWorld(d.sx, d.sy);
-      const dx = d.world.x - start.x, dy = d.world.y - start.y;
-      if (f && f.floating && !f.parent) {
-        f.node.x = Math.round((f.node.x || 0) + dx); f.node.y = Math.round((f.node.y || 0) + dy);
-        ok = true;
-      } else if (Math.hypot(dx, dy) > 40) {
-        ok = M.detach(doc, d.id, Math.round(d.t.x + dx), Math.round(d.t.y + dy));
-      }
+    if (marquee) { endMarquee(); return; }
+    if (relDrag) {
+      const moved = relDrag.moved;
+      relDrag = null;
+      cancelAnimationFrame(dragFrame); dragFrame = 0;
+      if (moved) App.commit({ noScroll: true });
+      return;
     }
-    if (ok) App.commit({ noScroll: true }); else render();
+    if (drag && !drag.started) { const d = drag; drag = null; if (d.narrowOnClick) App.select(d.id, { noScroll: true }); return; }
+    if (drag) endDrag(false);
   }
+  App.cancelDrag = () => { if (drag && drag.started) endDrag(true); else drag = null; };
 
   function onWheel(e) {
     e.preventDefault();
+    App.settleView();
     if (App.editing) App.commitEdit();
     const r = stageRect();
     if (e.ctrlKey || e.metaKey) {
@@ -898,10 +1134,15 @@
         { label: n.image ? 'Replace image…' : 'Insert image…', run: run('image'), icon: 'image' },
         { label: n.task ? 'Cycle task state' : 'Make it a task', kb: K('Mod+Shift+T'), run: run('task') },
         '-',
+        { label: 'Expand with AI…', run: () => App.run('ai', 'expand'), icon: 'ai' },
+        '-',
         { label: 'Copy', kb: K('Mod+C'), run: run('copy'), icon: 'copy' },
-        { label: 'Paste as subtopic', kb: K('Mod+V'), run: run('paste'), disabled: !App.clipboard },
+        { label: 'Paste as subtopic', kb: K('Mod+V'), run: run('pasteMenu') },
+        { label: 'Copy style', kb: K('Mod+Alt+C'), run: run('copyStyle') },
+        { label: 'Paste style', kb: K('Mod+Alt+V'), run: run('pasteStyle'), disabled: !App.styleClipboard },
         { label: 'Duplicate', kb: K('Mod+D'), run: run('duplicate'), disabled: isRoot || !f.parent },
         { label: 'Detach as floating topic', run: run('detach'), disabled: isRoot || !f.parent },
+        { label: 'Reset position', run: run('resetPosition'), disabled: !n.offset },
         '-',
         { label: 'Delete', kb: 'Del', run: run('deleteSel'), disabled: isRoot, icon: 'trash' },
       ], e.clientX, e.clientY);
@@ -909,10 +1150,11 @@
     const pt = toWorld(e.clientX, e.clientY);
     App.showMenu([
       { label: 'New floating topic here', run: () => App.run('floatingAt', pt) },
-      { label: 'Paste', kb: K('Mod+V'), run: run('paste'), disabled: !App.clipboard },
+      { label: 'Paste', kb: K('Mod+V'), run: run('pasteMenu') },
       '-',
       { label: 'Fit map to window', kb: K('Mod+0'), run: run('fit'), icon: 'fit' },
       { label: 'Center on central topic', kb: 'Home', run: run('centerRoot') },
+      { label: 'Reset all hand-placed topics', run: run('resetAllPositions') },
       '-',
       { label: 'Expand all', run: run('expandAll') },
       { label: 'Collapse all', run: run('collapseAll') },
@@ -950,6 +1192,29 @@
       if (added.length) { App.sel = added.map((n) => n.id); App.commit(); }
     },
   });
+  Object.assign(App.commands, {
+    /** Paste from a menu click: use the system clipboard (text copied in any app), else topics copied here. */
+    async pasteMenu() {
+      let text = '';
+      try { text = await navigator.clipboard.readText(); } catch (e) { /* clipboard not readable */ }
+      if (!text && !App.clipboard) return toast('The clipboard is empty.');
+      App.commands.paste(text);
+    },
+    copyStyle() {
+      const n = App.primaryNode();
+      if (!n) return;
+      App.styleClipboard = M.clone({ style: n.style || null, boundary: !!n.boundary });
+      toast('Style copied — select topics and choose Paste style', 1800);
+    },
+    pasteStyle() {
+      const c = App.styleClipboard;
+      if (!c) return toast('Copy a topic\'s style first.');
+      const nodes = App.selectedNodes();
+      nodes.forEach((n) => { if (c.style) n.style = M.clone(c.style); else delete n.style; });
+      if (nodes.length) App.commit({ noScroll: true });
+    },
+  });
+
   function writeClipboard(text) {
     try { navigator.clipboard.writeText(text).catch(() => {}); } catch (e) { /* ignore */ }
   }
@@ -1069,7 +1334,7 @@
 
   App.renderPNG = async function (scale, transparent) {
     const { svg: s, width, height } = exportData({ transparent });
-    const k = Math.min(scale || 2, 16000 / width, 16000 / height);
+    const k = Math.min(scale || 2, 16000 / width, 16000 / height, Math.sqrt(120e6 / (width * height)));
     const img = await loadImg('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(s));
     const c = document.createElement('canvas');
     c.width = Math.round(width * k); c.height = Math.round(height * k);
@@ -1116,7 +1381,9 @@
       App.focusId = null;
       $('#focus-bar').hidden = true;
       const slides = [{ id: null }].concat(App.doc.root.children.map((c) => ({ id: c.id })));
-      App.present = { slides, i: 0, sel: App.sel.slice() };
+      const collapsed = [];
+      M.walkDoc(App.doc, (n) => { if (n.collapsed) collapsed.push(n.id); });
+      App.present = { slides, i: 0, sel: App.sel.slice(), collapsed };
       App.sel = [];
       document.body.classList.add('presenting');
       $('#present-bar').hidden = false;
@@ -1128,6 +1395,9 @@
     presentExit() {
       if (!App.present) return;
       App.sel = App.present.sel;
+      // presenting may open collapsed branches; put them back exactly as they were
+      const was = new Set(App.present.collapsed);
+      M.walkDoc(App.doc, (n) => { if (was.has(n.id)) n.collapsed = true; else delete n.collapsed; });
       App.present = null;
       document.body.classList.remove('presenting');
       $('#present-bar').hidden = true;
@@ -1186,6 +1456,7 @@
     document.addEventListener('paste', onPaste);
     document.addEventListener('pointerdown', (e) => { if (!e.target.closest('#ctxmenu')) hideMenu(); }, true);
     window.addEventListener('resize', () => applyView());
+    if (!P.isElectron) window.addEventListener('beforeunload', (e) => { if (App.dirty) { e.preventDefault(); e.returnValue = ''; } });
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyUiTheme);
 
     $('#search-input').addEventListener('input', runSearch);

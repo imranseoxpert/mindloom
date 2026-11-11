@@ -10,8 +10,8 @@ Get the latest installers from the [Releases page](https://github.com/imranseoxp
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon and Intel) | `Mindloom-1.0.0-mac-universal.dmg` |
-| Windows 10/11 (64-bit) | `Mindloom-1.0.0-win-x64.exe` |
+| macOS (Apple Silicon and Intel) | `Mindloom-1.1.0-mac-universal.dmg` |
+| Windows 10/11 (64-bit) | `Mindloom-1.1.0-win-x64.exe` |
 
 The installers are not signed with a paid Apple or Microsoft developer certificate, so each system shows a warning the first time:
 
@@ -23,11 +23,14 @@ The installers are not signed with a paid Apple or Microsoft developer certifica
 **Building maps**
 
 - Add topics with <kbd>Tab</kbd> and <kbd>Enter</kbd>; rename by just typing; edit in place with <kbd>F2</kbd>, <kbd>Space</kbd> or a double-click
-- Drag any topic onto another to move it, between siblings to reorder it, or onto empty canvas to make it a floating topic
-- Double-click the canvas for a new floating topic
+- Drag a topic anywhere: it stays connected to its parent, its subtopics move with it, and nothing else shifts. Drop it near its original spot and it snaps back
+- Drop a topic onto another to re-parent it, or on a sibling's edge to reorder; drag a main topic across the centre to switch sides
+- Main topics keep their side when you add or remove others, so the map never reshuffles
+- Select several topics (Shift-click or Shift-drag a rectangle) and move them together; nudge with Shift+Alt+arrows
+- Double-click the canvas for a floating topic; drag a relationship line to reshape its curve
 - Collapse and expand branches, focus on a single branch, sort subtopics
 - Copy, cut, paste and duplicate whole branches; paste any indented text as topics
-- Undo and redo, auto-save, and recovery of the last session
+- Undo and redo, crash-safe auto-save, and the last file reopens on launch
 - Find across topics, notes, labels and links
 - Outline panel and mini map for large maps
 
@@ -46,7 +49,7 @@ Mind map, logic chart (left or right), org chart (up or down), tree/outline, tim
 - 11 topic shapes: rounded, rectangle, capsule, ellipse, circle, underline, diamond, hexagon, parallelogram, cloud, text only
 - 5 branch line styles: curved, tapered, straight, elbow, rounded elbow
 - 8 canvas backgrounds: plain, dots, grid, graph paper, ruled, crosses, diagonal, isometric
-- Per-topic fill, text, border and branch colours, fonts, sizes, alignment and wrap width
+- Per-topic fill, text, border and branch colours, fonts, sizes, alignment and wrap width; copy and paste a style between topics
 - Light and dark interface
 
 **Enriching topics**
@@ -69,9 +72,15 @@ Mind map, logic chart (left or right), org chart (up or down), tree/outline, tim
 
 Presentation mode (<kbd>F5</kbd>) walks through the map one branch at a time in full screen.
 
-**AI assistant (optional)**
+**AI assistant (optional, bring your own key)**
 
-Generate a whole map from a topic, or suggest subtopics for the selected topic. It uses your own [Anthropic API key](https://console.anthropic.com/), which is stored encrypted on your computer and sent only to `api.anthropic.com`. The rest of the app works fully offline.
+Generate a map from a topic, turn pasted notes into a map, or expand the selected topic with new ideas. Connect the provider you already use:
+
+| Cloud | On your computer | Other |
+| --- | --- | --- |
+| Anthropic (Claude), OpenAI, Google Gemini, Mistral, Groq, DeepSeek, xAI (Grok), OpenRouter, Together AI | Ollama, LM Studio (no key needed) | Any OpenAI-compatible API address |
+
+Keys are stored encrypted with your operating system's keychain and each key is only sent to its own provider. "Load models" lists the models your key can use. The rest of the app works fully offline.
 
 ## Keyboard shortcuts
 
@@ -88,6 +97,9 @@ On Windows use <kbd>Ctrl</kbd> where the table says <kbd>⌘</kbd>. Press <kbd>F
 | Collapse or expand | <kbd>⌘</kbd><kbd>/</kbd> |
 | Priority 1–6 | <kbd>⌘</kbd><kbd>1</kbd> … <kbd>⌘</kbd><kbd>6</kbd> |
 | Link / note / relationship / boundary | <kbd>⌘</kbd><kbd>K</kbd> / <kbd>⇧⌘</kbd><kbd>M</kbd> / <kbd>⇧⌘</kbd><kbd>R</kbd> / <kbd>⇧⌘</kbd><kbd>B</kbd> |
+| Nudge a topic | <kbd>Shift</kbd><kbd>Alt</kbd> + arrow keys |
+| Copy / paste style | <kbd>⌥⌘</kbd><kbd>C</kbd> / <kbd>⌥⌘</kbd><kbd>V</kbd> |
+| Select with a rectangle | <kbd>Shift</kbd> + drag on the canvas |
 | Focus on branch | <kbd>⇧⌘</kbd><kbd>F</kbd> |
 | Find | <kbd>⌘</kbd><kbd>F</kbd> |
 | Zoom in / out / fit | <kbd>⌘</kbd><kbd>=</kbd> / <kbd>⌘</kbd><kbd>-</kbd> / <kbd>⌘</kbd><kbd>0</kbd> |
@@ -119,12 +131,13 @@ npm run test:app
 ```
 
 - `npm test` runs the unit tests for the document model, the nine layout algorithms, the SVG renderer, theme contrast, and every import/export format.
-- `npm run test:app` launches the real app and drives it with mouse and keyboard events: creating, renaming, dragging and deleting topics, every structure × theme combination, dialogs, presentation mode, PNG/SVG/PDF export, and saving and reopening files.
+- `npm run test:app` launches the real app and drives it with mouse and keyboard events: creating, renaming, dragging (free placement, snapping, re-parenting, reordering, side switching, multi-select), the real clipboard and menus, every structure × theme combination, dialogs, presentation mode, PNG/SVG/PDF export, saving and reopening files, and the AI assistant against a local mock of both API styles.
 
 ## Project layout
 
 ```
-src/main/            Electron main process: windows, menus, file dialogs, PDF, AI
+src/main/            Electron main process: windows, menus, file dialogs, PDF, autosave
+src/main/ai.js       AI assistant: providers, encrypted key storage, requests
 src/renderer/core/   Pure logic, no DOM: model, layout, SVG renderer, import/export, themes, templates
 src/renderer/ui/     The interface: canvas interaction, panels, dialogs
 test/                Unit tests and the in-app end-to-end test

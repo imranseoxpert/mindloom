@@ -329,6 +329,23 @@
     extras.push({ type: 'spine', x1: root.x, x2: Math.min(sx + 20, root.x - 60), y: 0 });
   }
 
+  // ---------- manual positioning ----------
+  // A topic the user dragged keeps its parent and its auto-layout slot; it is simply drawn at an offset,
+  // and its whole branch moves with it. Offsets belong to the structure they were made in.
+  // Smallest depth that may be hand-placed in each structure (timeline main topics sit on the axis,
+  // fishbone bones are geometric, so those keep their slots).
+  const FREE_MIN_DEPTH = { mindmap: 1, right: 1, left: 1, down: 1, up: 1, tree: 1, radial: 1, timeline: 2 };
+  function canFreePosition(layoutId, depth) {
+    const d = FREE_MIN_DEPTH[layoutId];
+    return d != null && (depth == null || depth >= d);
+  }
+  function applyOffsets(t, key, ax, ay, ignoreId, minDepth) {
+    const o = t.node.offset;
+    if (o && o.l === key && t.depth >= minDepth && t.id !== ignoreId) { ax += o.x; ay += o.y; t.moved = true; }
+    if (ax || ay) { t.x += ax; t.y += ay; }
+    for (const c of t.children) applyOffsets(c, key, ax, ay, ignoreId, minDepth);
+  }
+
   // ---------- main entry ----------
   /**
    * ctx = { theme, settings, measure(text, font) -> px, focusId? }
@@ -345,16 +362,26 @@
     if (lay === 'mindmap') {
       root.x = -root.w / 2; root.y = -root.h / 2; root.dir = 'both';
       root.children.forEach((c) => sizeH(c, s));
-      const total = root.children.reduce((a, c) => a + c.sh, 0);
+      // Main topics keep the side they were given, so adding or removing one never reshuffles the map.
+      // Only topics without a side yet are balanced: a fresh map fills the right then the left (clockwise);
+      // a topic added later goes to the lighter side.
       const right = [], left = [];
-      let acc = 0;
-      root.children.forEach((c, i) => {
-        const side = c.node.side;
-        if (side === 'left') left.push(c);
-        else if (side === 'right') right.push(c);
-        else if (root.children.length === 1 || acc < total / 2 || i === 0) { right.push(c); acc += c.sh; }
-        else left.push(c);
-      });
+      const unsided = root.children.filter((c) => c.node.side !== 'left' && c.node.side !== 'right');
+      const sideOf = new Map();
+      if (unsided.length === root.children.length) {
+        const total = root.children.reduce((a, c) => a + c.sh, 0);
+        let acc = 0;
+        root.children.forEach((c, i) => {
+          const r = root.children.length === 1 || i === 0 || acc < total / 2;
+          sideOf.set(c, r ? 'right' : 'left');
+          if (r) acc += c.sh;
+        });
+      } else {
+        let rh = 0, lh = 0;
+        for (const c of root.children) { if (c.node.side === 'left') lh += c.sh; else if (c.node.side === 'right') rh += c.sh; }
+        for (const c of unsided) { if (rh <= lh) { sideOf.set(c, 'right'); rh += c.sh; } else { sideOf.set(c, 'left'); lh += c.sh; } }
+      }
+      root.children.forEach((c) => { ((c.node.side || sideOf.get(c)) === 'left' ? left : right).push(c); });
       const gap = s.vGap * 1.8, hg = s.hGap * 1.25;
       const stack = (arr, dir) => {
         let tot = -gap;
@@ -387,6 +414,8 @@
       sizeH(root, s); placeH(root, 0, 0, 1, s);
     }
 
+    if (canFreePosition(lay)) applyOffsets(root, lay, 0, 0, ctx.ignoreOffsetId, FREE_MIN_DEPTH[lay]);
+
     const forest = [root];
     if (!ctx.focusId) {
       const offset = (doc.root.children.length || 1);
@@ -394,6 +423,7 @@
         const ft = buildVT(f, 0, offset + i, ctx, true, null);
         sizeH(ft, s);
         placeH(ft, f.x || 0, (f.y || 0) + ft.h / 2, 1, s);
+        applyOffsets(ft, 'float', 0, 0, ctx.ignoreOffsetId, 1);
         forest.push(ft);
       });
     }
@@ -464,6 +494,23 @@
     const e = { from: p.id, to: c.id, color: st.line, width, depth: c.depth, orient: 'h' };
     const pcy = p.y + p.h / 2, ccy = c.y + c.h / 2;
     const dir = p.dir === 'both' ? (c.side === 'left' ? 'l' : 'r') : p.dir;
+    if (c.moved) {
+      // a hand-placed topic may sit anywhere; if it left its usual side, connect by the shortest clean route
+      const stem = p.x + Math.min(18, p.w / 3);
+      let ok = true;
+      if (dir === 'r') ok = c.x > p.x + p.w + 6;
+      else if (dir === 'l') ok = c.x + c.w < p.x - 6;
+      else if (dir === 'd') ok = c.y > p.y + p.h + 6;
+      else if (dir === 'u') ok = c.y + c.h < p.y - 6;
+      else if (dir === 'tree') ok = c.x > stem + 4 && ccy > p.y + p.h + 2;
+      else if (dir === 'tree-up') ok = c.x > stem + 4 && ccy < p.y - 2;
+      if (!ok) {
+        e.orient = 'free';
+        e.p1 = clipToBox(p, c.x + c.w / 2, ccy);
+        e.p2 = clipToBox(c, p.x + p.w / 2, pcy);
+        return e;
+      }
+    }
     if (dir === 'r' || dir === 'l') {
       const right = dir === 'r';
       e.p1 = { x: right ? p.x + p.w : p.x, y: anchorBottom(p) && p.depth > 0 ? p.y + p.h : pcy };
@@ -574,5 +621,5 @@
     return { d: `M ${f(p1.x)} ${f(p1.y)} C ${f(c1.x)} ${f(c1.y)} ${f(c2.x)} ${f(c2.y)} ${f(p2.x)} ${f(p2.y)}`, p1, p2, mid, ang };
   }
 
-  ML.layout = { wrapText, measureNode, layout, edgePath, relationPath, fontString, subtreeBox };
+  ML.layout = { wrapText, measureNode, layout, edgePath, relationPath, fontString, subtreeBox, canFreePosition };
 })(typeof module !== 'undefined' && module.exports ? (global.ML = global.ML || {}) : (window.ML = window.ML || {}));

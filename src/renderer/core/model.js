@@ -25,6 +25,56 @@
     };
   }
 
+  const COLOR = /^(#[0-9a-f]{3,8}|transparent|rgba?\([\d\s.,%]+\))$/i;
+  const num = (v, lo, hi) => { v = +v; return Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : null; };
+  const oneOf = (v, list) => (list.includes(v) ? v : null);
+  const drop = (o, k, v) => { if (v == null) delete o[k]; else o[k] = v; };
+
+  /** Keep only well-formed values on a node, so a damaged or hostile file cannot break rendering. */
+  function cleanNode(n) {
+    const T = ML.themes;
+    if (n.style && typeof n.style === 'object') {
+      const st = n.style;
+      for (const k of ['fill', 'color', 'border', 'lineColor']) if (st[k] != null && !COLOR.test(String(st[k]))) delete st[k];
+      if (st.fontSize != null) drop(st, 'fontSize', num(st.fontSize, 6, 200));
+      if (st.width != null) drop(st, 'width', num(st.width, 40, 2000));
+      if (st.borderWidth != null) drop(st, 'borderWidth', num(st.borderWidth, 0, 20));
+      if (st.shape != null) drop(st, 'shape', oneOf(st.shape, T.SHAPES.map((x) => x.id)));
+      if (st.font != null) drop(st, 'font', oneOf(st.font, T.FONTS.map((x) => x.id)));
+      if (st.align != null) drop(st, 'align', oneOf(st.align, ['left', 'center', 'right']));
+      if (st.borderDash != null) drop(st, 'borderDash', oneOf(st.borderDash, ['dashed', 'dotted']));
+      if (!Object.keys(st).length) delete n.style;
+    } else delete n.style;
+    if (n.offset) {
+      const x = num(n.offset.x, -1e5, 1e5), y = num(n.offset.y, -1e5, 1e5);
+      if (x == null || y == null || typeof n.offset.l !== 'string') delete n.offset; else n.offset = { x, y, l: n.offset.l };
+    }
+    if (n.icons != null) { n.icons = Array.isArray(n.icons) ? n.icons.filter((m) => typeof m === 'string' && m.length <= 24).slice(0, 12) : []; if (!n.icons.length) delete n.icons; }
+    if (n.tags != null) { n.tags = Array.isArray(n.tags) ? n.tags.map(String).filter(Boolean).slice(0, 20) : []; if (!n.tags.length) delete n.tags; }
+    for (const k of ['note', 'link', 'boundaryLabel']) if (n[k] != null) { n[k] = String(n[k]); if (!n[k]) delete n[k]; }
+    if (n.image != null) {
+      const im = n.image, w = im && num(im.w, 8, 4000), h = im && num(im.h, 8, 4000);
+      if (!im || typeof im.src !== 'string' || !/^data:image\//.test(im.src) || w == null || h == null) delete n.image; else n.image = { src: im.src, w, h };
+    }
+    if (n.side != null) drop(n, 'side', oneOf(n.side, ['left', 'right']));
+    if (n.task != null) drop(n, 'task', oneOf(n.task, ['todo', 'done']));
+    for (const k of ['collapsed', 'boundary']) if (n[k] != null) { if (n[k]) n[k] = true; else delete n[k]; }
+  }
+
+  function cleanSettings(s) {
+    const T = ML.themes, D = T.DEFAULT_SETTINGS;
+    s.theme = oneOf(s.theme, T.THEMES.map((x) => x.id)) || D.theme;
+    s.layout = oneOf(s.layout, T.LAYOUTS.map((x) => x.id)) || D.layout;
+    s.lineStyle = oneOf(s.lineStyle, T.LINE_STYLES.map((x) => x.id)) || D.lineStyle;
+    s.pattern = oneOf(s.pattern, T.PATTERNS.map((x) => x.id)) || D.pattern;
+    s.font = oneOf(s.font, T.FONTS.map((x) => x.id)) || D.font;
+    const shapes = T.SHAPES.map((x) => x.id);
+    for (const k of ['root', 'main', 'sub']) s.shapes[k] = oneOf(s.shapes[k], shapes) || D.shapes[k];
+    s.rainbow = s.rainbow == null ? null : !!s.rainbow;
+    const lim = { hGap: [10, 300], vGap: [0, 120], lineWidth: [0.5, 12], maxWidth: [60, 1200], fontScale: [0.4, 3] };
+    for (const k of Object.keys(lim)) { const v = num(s[k], lim[k][0], lim[k][1]); s[k] = v == null ? D[k] : v; }
+  }
+
   /** Fill in missing fields and repair duplicate/missing ids so any loaded file is safe to use. */
   function normalizeDoc(doc) {
     if (!doc || typeof doc !== 'object' || !doc.root) throw new Error('Not a Mindloom document');
@@ -35,18 +85,25 @@
     doc.relations = Array.isArray(doc.relations) ? doc.relations : [];
     doc.settings = Object.assign(clone(T.DEFAULT_SETTINGS), doc.settings || {});
     doc.settings.shapes = Object.assign(clone(T.DEFAULT_SETTINGS.shapes), (doc.settings && doc.settings.shapes) || {});
+    cleanSettings(doc.settings);
     const seen = new Set();
     const fix = (n) => {
       if (!n.id || seen.has(n.id)) n.id = uid();
       seen.add(n.id);
       n.text = n.text == null ? '' : String(n.text);
-      n.children = Array.isArray(n.children) ? n.children : [];
+      n.children = Array.isArray(n.children) ? n.children.filter((c) => c && typeof c === 'object') : [];
+      cleanNode(n);
       n.children.forEach(fix);
     };
     fix(doc.root);
     doc.floating.forEach((f) => { fix(f); if (f.x == null && f.y == null) f._place = true; f.x = +f.x || 0; f.y = +f.y || 0; });
     doc.relations = doc.relations.filter((r) => r && seen.has(r.from) && seen.has(r.to));
-    doc.relations.forEach((r) => { if (!r.id) r.id = uid(); });
+    doc.relations.forEach((r) => {
+      if (!r.id) r.id = uid();
+      r.label = r.label == null ? '' : String(r.label);
+      if (r.color != null && !COLOR.test(String(r.color))) delete r.color;
+      if (r.bend != null) drop(r, 'bend', num(r.bend, -2000, 2000));
+    });
     return doc;
   }
 
@@ -134,6 +191,7 @@
     f.list.splice(f.index, 1, n);
     n.children.push(f.node);
     if (f.node.side) { n.side = f.node.side; delete f.node.side; }
+    if (f.node.offset) { n.offset = f.node.offset; delete f.node.offset; }
     return n;
   }
 
@@ -170,6 +228,7 @@
     if (f.parent) f.list.splice(f.index, 1);
     else if (f.floating) { doc.floating.splice(f.index, 1); delete f.node.x; delete f.node.y; }
     else return false;
+    delete f.node.offset;
     if (index == null || index < 0 || index > np.children.length) np.children.push(f.node);
     else np.children.splice(index, 0, f.node);
     np.collapsed = false;
@@ -182,6 +241,7 @@
     f.list.splice(f.index, 1);
     f.node.x = x; f.node.y = y;
     delete f.node.side;
+    delete f.node.offset;
     doc.floating.push(f.node);
     return true;
   }
@@ -202,6 +262,7 @@
     if (!f || !f.parent || f.index === 0) return false;
     const prev = f.list[f.index - 1];
     f.list.splice(f.index, 1);
+    delete f.node.offset;
     prev.children.push(f.node);
     prev.collapsed = false;
     return true;
@@ -213,6 +274,7 @@
     if (path.length < 3) return false;
     const node = path[path.length - 1], parent = path[path.length - 2], grand = path[path.length - 3];
     parent.children.splice(parent.children.indexOf(node), 1);
+    delete node.offset;
     grand.children.splice(grand.children.indexOf(parent) + 1, 0, node);
     return true;
   }
@@ -235,7 +297,7 @@
     const p = getNode(doc, parentId);
     if (!p) return null;
     const c = cloneWithNewIds(subtree);
-    delete c.x; delete c.y;
+    delete c.x; delete c.y; delete c.offset; delete c.side;
     if (index == null) p.children.push(c); else p.children.splice(index, 0, c);
     p.collapsed = false;
     return c;
@@ -297,13 +359,16 @@
 
   /** Snapshot-based undo history. */
   class History {
-    constructor(limit = 300) { this.limit = limit; this.stack = []; this.idx = -1; }
+    constructor(limit = 300, maxChars = 80e6) { this.limit = limit; this.maxChars = maxChars; this.stack = []; this.idx = -1; }
     reset(snapshot) { this.stack = [snapshot]; this.idx = 0; }
     push(snapshot) {
       if (this.stack[this.idx] === snapshot) return false;
       this.stack = this.stack.slice(0, this.idx + 1);
       this.stack.push(snapshot);
-      if (this.stack.length > this.limit) this.stack.shift();
+      // maps with embedded images make big snapshots: cap total memory, always keeping the last two steps
+      let total = 0;
+      for (const x of this.stack) total += x.length;
+      while (this.stack.length > 2 && (this.stack.length > this.limit || total > this.maxChars)) total -= this.stack.shift().length;
       this.idx = this.stack.length - 1;
       return true;
     }
@@ -315,7 +380,7 @@
 
   ML.model = {
     uid, createNode, createDoc, normalizeDoc, clone, trees, walk, walkDoc, find, getNode, pathTo, isAncestor,
-    addChild, addSibling, addParent, remove, move, detach, reorder, indent, outdent, duplicate, insertSubtree,
+    addChild, addSibling, addParent, remove, move, detach, reorder, indent, outdent, duplicate, insertSubtree, cleanNode,
     cloneWithNewIds, expandTo, setCollapsed, collapseToLevel, search, stats, toggleMarker, addRelation, History,
   };
 })(typeof module !== 'undefined' && module.exports ? (global.ML = global.ML || {}) : (window.ML = window.ML || {}));

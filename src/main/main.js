@@ -61,7 +61,7 @@ function createWindow(initialPath) {
     },
   });
   windows.add(win);
-  state.set(win, { dirty: false, path: null, title: 'Mindloom', forceClose: false, initialPath: initialPath || null });
+  state.set(win, { dirty: false, path: null, title: 'Mindloom', forceClose: false, initialPath: initialPath || null, isFirst, autosaveKey: `${Date.now().toString(36)}-${win.id}` });
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   win.once('ready-to-show', () => { if (process.env.MINDLOOM_SMOKE) win.showInactive(); else win.show(); });
 
@@ -81,11 +81,16 @@ function createWindow(initialPath) {
     if (response === 0) send(win, 'saveThenClose');
     else if (response === 1) {
       st.forceClose = true;
-      try { await win.webContents.executeJavaScript("localStorage.removeItem('mindloom:autosave')"); } catch (err) { /* ignore */ }
       win.close();
     }
   });
-  win.on('closed', () => windows.delete(win));
+  // closed cleanly (saved, unchanged, or "Don't Save"): forget the crash copy and remember the file for next launch
+  win.on('closed', () => {
+    const st = state.get(win);
+    clearAutosave(win);
+    if (st && st.path && !process.env.MINDLOOM_SMOKE) { try { fs.writeFileSync(lastFile(), JSON.stringify({ path: st.path })); } catch (e) { /* ignore */ } }
+    windows.delete(win);
+  });
   return win;
 }
 
@@ -254,64 +259,49 @@ ipcMain.on('force-close', (e) => { const win = winOf(e); const st = win && state
 ipcMain.handle('set-fullscreen', (e, on) => { const w = winOf(e); if (w) w.setFullScreen(!!on); });
 ipcMain.handle('get-recent', () => getRecent().filter((p) => fs.existsSync(p)));
 
-// ---------------- AI assistant (user's own Anthropic API key) ----------------
-const keyFile = () => path.join(app.getPath('userData'), 'ai-key.bin');
-function loadKey() {
-  try {
-    const buf = fs.readFileSync(keyFile());
-    return safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(buf) : null;
-  } catch (e) { return null; }
-}
-ipcMain.handle('ai-key', (e, op, key) => {
-  if (op === 'has') return !!loadKey() || !!process.env.ANTHROPIC_API_KEY;
-  if (op === 'clear') { try { fs.unlinkSync(keyFile()); } catch (err) { /* ignore */ } return true; }
-  if (op === 'set' && typeof key === 'string' && key.trim()) {
-    if (!safeStorage.isEncryptionAvailable()) throw new Error('Secure storage is not available on this system.');
-    fs.writeFileSync(keyFile(), safeStorage.encryptString(key.trim()));
-    return true;
-  }
-  return false;
+// ---------------- AI assistant: bring your own key (any provider) ----------------
+require('./ai').register({ ipcMain, app, safeStorage, smoke: !!process.env.MINDLOOM_SMOKE });
+
+// ---------------- crash-safe autosave + resume last session ----------------
+// Each window writes its unsaved state to userData/autosave/<key>.json. A clean close deletes it, so a file
+// left behind means the app crashed or was killed: it is offered back on the next start.
+const autosaveDir = () => path.join(app.getPath('userData'), 'autosave');
+const lastFile = () => path.join(app.getPath('userData'), 'last-session.json');
+const safeKey = (k) => String(k || '').replace(/[^a-z0-9-]/gi, '').slice(0, 60);
+ipcMain.handle('autosave-write', (e, json) => {
+  const st = state.get(winOf(e));
+  if (!st || typeof json !== 'string') return false;
+  fs.mkdirSync(autosaveDir(), { recursive: true });
+  const f = path.join(autosaveDir(), safeKey(st.autosaveKey) + '.json');
+  fs.writeFileSync(f + '.tmp', json, 'utf8');
+  fs.renameSync(f + '.tmp', f);
+  return true;
 });
-
-const AI_SYSTEM = 'You are the brainstorming engine of a mind-mapping app. Reply with ONLY an indented outline: one topic per line, indented with two spaces per level. No bullets, numbering, markdown, quotes, emojis or commentary. Keep every topic short (at most 7 words) and specific.';
-
-ipcMain.handle('ai', async (e, req) => {
-  const apiKey = loadKey() || process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error('Add your Anthropic API key first.');
-  const mod = require('@anthropic-ai/sdk');
-  const Anthropic = mod.default || mod;
-  const client = new Anthropic({ apiKey, timeout: 120000, maxRetries: 2 });
-  const clip = (s, n) => String(s || '').slice(0, n);
-  let prompt;
-  if (req && req.mode === 'expand') {
-    prompt = `Here is the current mind map as an indented outline:\n<map>\n${clip(req.outline, 6000)}\n</map>\n\nSuggest 4 to 7 NEW subtopics for the topic at this path: ${(req.path || []).map((x) => clip(x, 120)).join(' > ')}.\nDo not repeat existing subtopics: ${(req.existing || []).map((x) => clip(x, 80)).join('; ') || 'none'}.\nReply with the new subtopics only (no line for the parent). You may add up to 3 indented children under each.`;
-  } else {
-    prompt = `Create a rich mind map about: ${clip(req && req.topic, 500)}\nThe first line is the central topic. Give 5 to 7 main branches, each with 2 to 5 subtopics; go one level deeper where it adds real value.`;
-  }
-  let response;
+function clearAutosave(win) {
+  const st = state.get(win);
+  if (!st) return;
+  try { fs.unlinkSync(path.join(autosaveDir(), safeKey(st.autosaveKey) + '.json')); } catch (e) { /* none */ }
+}
+/** For the first window: a crashed session's autosave, else the file that was open last time. */
+ipcMain.handle('session-restore', (e) => {
+  const st = state.get(winOf(e));
+  if (!st || !st.isFirst) return null;
   try {
-    response = await client.beta.messages.create({
-      model: 'claude-opus-5-5',
-      max_tokens: 16000,
-      betas: ['server-side-fallback-2026-07-01'],
-      fallbacks: 'default',
-      output_config: { effort: 'medium' },
-      system: AI_SYSTEM,
-      messages: [{ role: 'user', content: prompt }],
-    });
-  } catch (err) {
-    if (err instanceof Anthropic.AuthenticationError) throw new Error('Your API key was rejected. Check it and try again.');
-    if (err instanceof Anthropic.PermissionDeniedError) throw new Error('This API key is not allowed to use the model.');
-    if (err instanceof Anthropic.RateLimitError) throw new Error('Rate limited by the API. Please wait a moment and retry.');
-    if (err instanceof Anthropic.APIConnectionError) throw new Error('Could not reach api.anthropic.com. Check your internet connection.');
-    if (err instanceof Anthropic.APIError) throw new Error(`API error ${err.status || ''}: ${err.message}`);
-    throw err;
-  }
-  if (response.stop_reason === 'refusal') throw new Error('The model declined this request. Try rephrasing the topic.');
-  const text = response.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
-  const outline = text.replace(/```[a-z]*\n?|```/gi, '').split('\n').filter((l) => l.trim()).join('\n');
-  if (!outline.trim()) throw new Error('The model returned an empty answer.');
-  return { outline };
+    const own = safeKey(st.autosaveKey) + '.json';
+    const files = fs.readdirSync(autosaveDir()).filter((f) => f.endsWith('.json') && f !== own)
+      .map((f) => ({ f, t: fs.statSync(path.join(autosaveDir(), f)).mtimeMs })).sort((a, b) => b.t - a.t);
+    if (files.length) {
+      const text = fs.readFileSync(path.join(autosaveDir(), files[0].f), 'utf8');
+      // the restored copy now belongs to this window; drop the old file and any older than a week
+      for (const x of files) if (x === files[0] || Date.now() - x.t > 7 * 864e5) fs.rmSync(path.join(autosaveDir(), x.f), { force: true });
+      return { kind: 'autosave', data: JSON.parse(text) };
+    }
+  } catch (err) { /* no autosaves */ }
+  try {
+    const last = JSON.parse(fs.readFileSync(lastFile(), 'utf8'));
+    if (last && typeof last.path === 'string' && fs.existsSync(last.path)) return { kind: 'path', path: last.path };
+  } catch (err) { /* first run */ }
+  return null;
 });
 
 // ---------------- app lifecycle ----------------

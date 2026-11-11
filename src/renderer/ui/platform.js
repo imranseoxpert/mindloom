@@ -31,6 +31,9 @@
     return btoa(s);
   };
 
+  // errors thrown in the main process arrive as "Error invoking remote method 'x': Error: message"
+  const cleanErr = (e) => { throw new Error(String((e && e.message) || e).replace(/^Error invoking remote method '[^']+':\s*(Error:\s*)?/, '')); };
+
   const OPEN_EXT = ['mindloom', 'json', 'md', 'markdown', 'txt', 'opml', 'mm', 'xmind'];
 
   const P = {
@@ -96,8 +99,18 @@
       else if (!on && document.fullscreenElement) document.exitFullscreen().catch(() => {});
     },
     recent() { return bridge ? bridge.getRecent() : Promise.resolve([]); },
-    ai(req) { return bridge && bridge.ai ? bridge.ai(req) : Promise.reject(new Error('The AI assistant is available in the desktop app.')); },
-    aiKey(op, key) { return bridge && bridge.aiKey ? bridge.aiKey(op, key) : Promise.resolve(false); },
+    ai(req) { return bridge ? bridge.ai(req).catch(cleanErr) : Promise.reject(new Error('The AI assistant is available in the desktop app.')); },
+    aiConfig() { return bridge ? bridge.aiConfig() : Promise.resolve(null); },
+    aiSetConfig(patch) { return bridge ? bridge.aiSetConfig(patch).catch(cleanErr) : Promise.resolve(false); },
+    aiSetKey(provider, key) { return bridge ? bridge.aiSetKey(provider, key).catch(cleanErr) : Promise.resolve(false); },
+    aiClearKey(provider) { return bridge ? bridge.aiClearKey(provider) : Promise.resolve(false); },
+    aiModels(provider) { return bridge ? bridge.aiModels(provider).catch(cleanErr) : Promise.resolve([]); },
+    /** Crash-safe autosave: a file in the desktop app, browser storage on the web. */
+    autosave(data) {
+      if (bridge && bridge.autosave) return bridge.autosave(JSON.stringify(data)).then(() => true, () => false);
+      return Promise.resolve(P.store.set('autosave', data));
+    },
+    restoreSession() { return bridge && bridge.restoreSession ? bridge.restoreSession() : Promise.resolve(null); },
     pickFile, download,
     store: {
       get(k) { try { return JSON.parse(localStorage.getItem('mindloom:' + k)); } catch (e) { return null; } },

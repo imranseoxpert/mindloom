@@ -294,3 +294,124 @@ test('topic text never matches its own fill in any theme (main, sub, floating; r
     }
   }
 });
+
+test('manual offsets: a dragged topic stays connected, moves its branch, and keeps siblings in place', () => {
+  for (const lay of ['mindmap', 'right', 'left', 'down', 'up', 'tree', 'radial']) {
+    const doc = TPL.build('project');
+    doc.settings.layout = lay;
+    const before = Lay.layout(doc, ctxFor(doc));
+    const target = doc.root.children[2];
+    const pos = new Map(before.list.map((t) => [t.id, { x: t.x, y: t.y }]));
+    target.offset = { x: 137, y: -91, l: lay };
+    const after = Lay.layout(doc, ctxFor(doc));
+    const inBranch = new Set();
+    M.walk(target, (n) => inBranch.add(n.id));
+    for (const t of after.list) {
+      const p = pos.get(t.id);
+      const dx = t.x - p.x, dy = t.y - p.y;
+      if (inBranch.has(t.id)) assert.ok(Math.abs(dx - 137) < 0.01 && Math.abs(dy + 91) < 0.01, `${lay}: branch moved together`);
+      else assert.ok(Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01, `${lay}: ${t.node.text} did not move`);
+    }
+    assert.equal(after.edges.length, before.edges.length, `${lay}: still connected`);
+    for (const st of T.LINE_STYLES) for (const e of after.edges) assert.ok(!/NaN|undefined/.test(Lay.edgePath(e, st.id).d), `${lay}/${st.id}`);
+    // dragged across its parent: the connector re-routes instead of looping back
+    target.offset = { x: lay === 'left' ? 900 : -900, y: 40, l: lay };
+    const crossed = Lay.layout(doc, ctxFor(doc));
+    const edge = crossed.edges.find((e) => e.to === target.id);
+    assert.ok(Number.isFinite(edge.p1.x) && Number.isFinite(edge.p2.y), `${lay}: crossed edge valid`);
+    // ignoreOffsetId reports the automatic slot
+    const auto = Lay.layout(doc, ctxFor(doc, { ignoreOffsetId: target.id })).nodes.get(target.id);
+    assert.ok(Math.abs(auto.x - pos.get(target.id).x) < 0.01, `${lay}: auto slot recoverable`);
+    // offsets made in another structure are ignored
+    target.offset = { x: 500, y: 500, l: 'other' };
+    assert.ok(Math.abs(Lay.layout(doc, ctxFor(doc)).nodes.get(target.id).x - pos.get(target.id).x) < 0.01, `${lay}: foreign offset ignored`);
+  }
+  assert.equal(Lay.canFreePosition('fishbone'), false);
+  assert.equal(Lay.canFreePosition('timeline', 1), false);
+  assert.equal(Lay.canFreePosition('timeline', 2), true);
+});
+
+test('structural moves clear a manual offset; duplicates and pastes start clean', () => {
+  const { doc, a, b } = sampleDoc();
+  b.offset = { x: 10, y: 10, l: 'mindmap' };
+  M.move(doc, b.id, a.id);
+  assert.equal(b.offset, undefined);
+  b.offset = { x: 10, y: 10, l: 'mindmap' };
+  M.outdent(doc, b.id);
+  assert.equal(b.offset, undefined);
+  b.offset = { x: 10, y: 10, l: 'mindmap' };
+  const pasted = M.insertSubtree(doc, a.id, b);
+  assert.equal(pasted.offset, undefined);
+});
+
+test('normalizeDoc drops malformed or hostile values', () => {
+  const doc = M.normalizeDoc({ root: { text: 'R', style: { fill: '"><img src=x onerror=alert(1)>', color: '#fff', fontSize: 'huge', shape: 'nope', width: 99999 }, image: { src: 'https://evil.example/x.png', w: 10, h: 10 },
+    offset: { x: 'a', y: 1, l: 'mindmap' }, icons: 'p1', task: 'maybe', side: 'up', children: [null, { text: 'ok', style: { fill: '#ff0000', fontSize: 30 }, offset: { x: 5, y: 6, l: 'right' }, image: { src: 'data:image/png;base64,AAAA', w: 50, h: 40 } }] },
+    relations: [], settings: { theme: 'zzz', layout: 'spiral', hGap: 1e9, lineWidth: 'x', shapes: { root: 'bad' } } });
+  assert.deepEqual(doc.root.style, { color: '#fff', width: 2000 });
+  assert.equal(doc.root.image, undefined);
+  assert.equal(doc.root.offset, undefined);
+  assert.equal(doc.root.icons, undefined);
+  assert.equal(doc.root.task, undefined);
+  assert.equal(doc.root.side, undefined);
+  assert.equal(doc.root.children.length, 1);
+  assert.deepEqual(doc.root.children[0].style, { fill: '#ff0000', fontSize: 30 });
+  assert.deepEqual(doc.root.children[0].offset, { x: 5, y: 6, l: 'right' });
+  assert.ok(doc.root.children[0].image);
+  assert.equal(doc.settings.theme, 'fresh');
+  assert.equal(doc.settings.layout, 'mindmap');
+  assert.equal(doc.settings.hGap, 300);
+  assert.equal(doc.settings.lineWidth, 2);
+  assert.equal(doc.settings.shapes.root, 'rounded');
+  const L = Lay.layout(doc, ctxFor(doc));
+  assert.ok(!/NaN|undefined|onerror/.test(R.scene(L, doc, { theme: T.getTheme(doc.settings.theme), settings: doc.settings })));
+});
+
+test('history caps memory but always keeps the latest steps', () => {
+  const h = new M.History(300, 100);
+  h.reset('a'.repeat(60));
+  h.push('b'.repeat(60));
+  h.push('c'.repeat(60));
+  assert.equal(h.stack.length, 2);
+  assert.equal(h.undo()[0], 'b');
+  assert.equal(h.undo(), null);
+});
+
+test('mind map sides are stable: adding or removing a main topic never moves the others across', () => {
+  const doc = M.createDoc('Root');
+  for (let i = 0; i < 6; i++) M.addChild(doc, doc.root.id, 'T' + i);
+  const sides = () => new Map(Lay.layout(doc, ctxFor(doc)).root.children.map((t) => [t.node.text, t.side]));
+  const first = sides();
+  assert.deepEqual([...first.values()], ['right', 'right', 'right', 'left', 'left', 'left'], 'fresh map: clockwise fill');
+  // the app persists sides after the first layout
+  doc.root.children.forEach((n) => { n.side = first.get(n.text); });
+  M.remove(doc, [doc.root.children[0].id]);
+  M.addChild(doc, doc.root.id, 'New');
+  const after = sides();
+  for (const [k, v] of first) if (after.has(k)) assert.equal(after.get(k), v, k + ' kept its side');
+  assert.equal(after.get('New'), 'right', 'new topic goes to the lighter side');
+  assert.equal(IO.fromFreeMind(IO.toFreeMind(doc)).root.children.find((c) => c.text === 'T3').side, 'left');
+});
+
+test('AI: base URL safety, model filtering and answer cleaning', () => {
+  const AI = require('../src/main/ai.js');
+  assert.equal(AI.validateBaseUrl('https://api.example.com/v1/'), 'https://api.example.com/v1');
+  assert.equal(AI.validateBaseUrl('http://localhost:11434/v1'), 'http://localhost:11434/v1');
+  assert.equal(AI.validateBaseUrl('http://192.168.1.20:1234/v1'), 'http://192.168.1.20:1234/v1');
+  assert.throws(() => AI.validateBaseUrl('http://api.example.com/v1'), /https/);
+  assert.throws(() => AI.validateBaseUrl('https://user:pw@api.example.com'), /key field/);
+  assert.throws(() => AI.validateBaseUrl('file:///etc/passwd'), /https/);
+  assert.throws(() => AI.validateBaseUrl('not a url'), /full address/);
+  assert.equal(AI.isPrivateHost('172.20.0.5'), true);
+  assert.equal(AI.isPrivateHost('172.40.0.5'), false);
+  const models = AI.chatModels([{ id: 'old-chat', created: 10 }, { id: 'text-embedding-3', created: 99 }, { id: 'new-chat', created: 20 }, { id: 'whisper-1' }, { id: 'new-chat', created: 20 }, { id: 'models/gemini-x', created_at: '2026-01-01' }]);
+  assert.deepEqual(models.map((m) => m.id), ['gemini-x', 'new-chat', 'old-chat']);
+  assert.equal(AI.chatText({ choices: [{ message: { content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] } }] }), 'ab');
+  assert.equal(AI.cleanOutline('<think>hmm\nlong</think>\nSure! Here is your map:\n```text\n# Root\n  - **One**\n\n  2. Two\n```'), 'Root\n  One\n  Two');
+  assert.equal(AI.cleanOutline('Sure-fire ideas\n  Quick wins'), 'Sure-fire ideas\n  Quick wins', 'real topics are never dropped');
+  // every provider has a name and either a fixed address, an editable one, or the SDK
+  for (const p of AI.PROVIDERS) assert.ok(p.name && (p.kind === 'anthropic' || p.base || p.editableBase), p.id);
+  assert.ok(AI.PROVIDERS.length >= 10);
+  assert.match(AI.buildPrompt({ mode: 'text', text: 'abc' }), /<text>\nabc\n<\/text>/);
+  assert.match(AI.buildPrompt({ mode: 'expand', path: ['A', 'B'], existing: ['x'] }), /A > B/);
+});

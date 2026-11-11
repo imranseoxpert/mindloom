@@ -228,7 +228,7 @@
       const note = n.note ? `${pad}  <richcontent TYPE="NOTE"><html><body><p>${xmlEsc(n.note)}</p></body></html></richcontent>\n` : '';
       const hook = free ? `${pad}  <hook NAME="FreeNode"/>\n` : '';
       const floats = d === 0 ? doc.floating.map((f) => rec(f, 1, 'right', true)).join('') : '';
-      return `${pad}<node TEXT="${xmlEsc(n.text)}"${pos}${link}${folded}>\n${hook}${note}${n.children.map((c, i) => rec(c, d + 1, i % 2 ? 'left' : 'right')).join('')}${floats}${pad}</node>\n`;
+      return `${pad}<node TEXT="${xmlEsc(n.text)}"${pos}${link}${folded}>\n${hook}${note}${n.children.map((c, i) => rec(c, d + 1, c.side || (i % 2 ? 'left' : 'right'))).join('')}${floats}${pad}</node>\n`;
     };
     return `<map version="1.0.1">\n${rec(doc.root, 0, 'right')}</map>\n`;
   }

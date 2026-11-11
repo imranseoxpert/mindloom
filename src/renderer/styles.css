@@ -109,7 +109,8 @@ body.presenting #toolbar, body.presenting #statusbar, body.presenting .panel, bo
 #canvas .badge, #canvas .toggler { cursor: pointer; }
 #canvas .icon { cursor: pointer; }
 #canvas .relation { cursor: pointer; }
-#canvas .node.dragging { opacity: 0.35; }
+#canvas .node.dragging { opacity: 0.82; }
+#stage.dragging-topic, #stage.dragging-topic .node { cursor: grabbing; }
 #canvas .drop-hint { pointer-events: none; }
 
 #editor {
@@ -293,3 +294,9 @@ kbd { display: inline-block; padding: 1px 6px; border: 1px solid var(--ui-border
 .ai-out { white-space: pre-wrap; background: var(--ui-bg2); border-radius: 8px; padding: 10px; max-height: 220px; overflow: auto; font-size: 12px; }
 .spinner { width: 16px; height: 16px; border: 2px solid var(--ui-border); border-top-color: var(--ui-accent); border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block; vertical-align: middle; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+.ai-grid { display: grid; grid-template-columns: 78px 1fr; gap: 8px 10px; align-items: center; }
+.ai-grid > label { color: var(--ui-fg2); }
+.ai-grid > label[hidden], .ai-grid > div[hidden] { display: none !important; }
+.ai-grid .row .field { flex: 1; min-width: 0; }
+.modal a { color: var(--ui-accent); }
