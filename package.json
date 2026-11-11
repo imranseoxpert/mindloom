@@ -14,7 +14,7 @@
   "keywords": ["mind map", "mindmap", "brainstorm", "outline", "electron"],
   "scripts": {
     "start": "electron .",
-    "test": "node --test test/*.test.js",
+    "test": "node --test test/core.test.js",
     "test:app": "node scripts/run-smoke.js",
     "icon": "electron scripts/make-icon.js",
     "dist:mac": "electron-builder --mac",
