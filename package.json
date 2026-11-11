@@ -1,0 +1,85 @@
+{
+  "name": "mindloom",
+  "productName": "Mindloom",
+  "version": "1.0.0",
+  "description": "A fast, friendly mind mapping app for macOS and Windows",
+  "main": "src/main/main.js",
+  "homepage": "https://github.com/imranseoxpert/mindloom",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/imranseoxpert/mindloom.git"
+  },
+  "author": "imranseoxpert",
+  "license": "MIT",
+  "keywords": ["mind map", "mindmap", "brainstorm", "outline", "electron"],
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "test:app": "node scripts/run-smoke.js",
+    "icon": "electron scripts/make-icon.js",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "dist": "electron-builder --mac --win"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0"
+  },
+  "devDependencies": {
+    "electron": "^45.3.0",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "io.github.imranseoxpert.mindloom",
+    "productName": "Mindloom",
+    "copyright": "Copyright © 2026 Mindloom contributors",
+    "artifactName": "Mindloom-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "test/smoke-electron.js",
+      "package.json"
+    ],
+    "fileAssociations": [
+      {
+        "ext": "mindloom",
+        "name": "Mindloom Map",
+        "description": "Mindloom mind map",
+        "role": "Editor",
+        "mimeType": "application/x-mindloom"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["universal"]
+        }
+      ],
+      "identity": "-",
+      "hardenedRuntime": false,
+      "darkModeSupport": true
+    },
+    "dmg": {
+      "title": "Mindloom ${version}"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "shortcutName": "Mindloom"
+    }
+  }
+}

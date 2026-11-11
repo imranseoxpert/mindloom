@@ -1,0 +1,229 @@
+{
+ "app": "mindloom",
+ "version": 1,
+ "root": {
+  "id": "nmwbqf4turk6z11",
+  "text": "Welcome to Mindloom",
+  "children": [
+   {
+    "id": "nmwbqf4tvktbub2",
+    "text": "Create",
+    "children": [
+     {
+      "id": "nmwbqf4tvy6ojk3",
+      "text": "Tab adds a subtopic",
+      "children": []
+     },
+     {
+      "id": "nmwbqf4tvbw5z94",
+      "text": "Enter adds a topic",
+      "children": []
+     },
+     {
+      "id": "nmwbqf4tv29z945",
+      "text": "Just start typing to rename",
+      "children": []
+     },
+     {
+      "id": "nmwbqf4tvoyi6b6",
+      "text": "Double-click the canvas for a floating topic",
+      "children": []
+     },
+     {
+      "id": "nmwbqf5ea0ng2nt",
+      "text": "Alpha",
+      "children": [],
+      "icons": [
+       "p1",
+       "🔥"
+      ],
+      "task": "todo",
+      "boundary": true,
+      "style": {
+       "fill": "#ffd43b",
+       "shape": "hexagon",
+       "bold": true,
+       "fontSize": 20
+      },
+      "note": "A note",
+      "link": "https://example.com",
+      "tags": [
+       "tag one"
+      ]
+     }
+    ],
+    "icons": [
+     "p1"
+    ],
+    "collapsed": false
+   },
+   {
+    "id": "nmwbqf4tv4sdg57",
+    "text": "Organise",
+    "children": [
+     {
+      "id": "nmwbqf4tv7q1cg8",
+      "text": "Drag topics to move them",
+      "children": []
+     },
+     {
+      "id": "nmwbqf4tv397ay9",
+      "text": "Alt + arrows to reorder",
+      "children": []
+     },
+     {
+      "id": "nmwbqf4tv5dbala",
+      "text": "Collapse branches with the ⊖ handle",
+      "children": [],
+      "task": "done"
+     },
+     {
+      "id": "nmwbqf4tv7sx2sb",
+      "text": "Focus on one branch",
+      "children": [],
+      "task": "todo"
+     }
+    ],
+    "icons": [
+     "🧠"
+    ]
+   },
+   {
+    "id": "nmwbqf4tvxansvc",
+    "text": "Style",
+    "children": [
+     {
+      "id": "nmwbqf4tvxo98cd",
+      "text": "16 colour themes",
+      "children": []
+     },
+     {
+      "id": "nmwbqf4tv2ubhoe",
+      "text": "9 structures",
+      "children": []
+     },
+     {
+      "id": "nmwbqf4tvdmq99f",
+      "text": "Shapes, lines and backgrounds",
+      "children": []
+     },
+     {
+      "id": "nmwbqf4tvqwvrng",
+      "text": "Rainbow branches",
+      "children": []
+     }
+    ],
+    "icons": [
+     "🎨"
+    ],
+    "boundary": true,
+    "boundaryLabel": "Make it yours"
+   },
+   {
+    "id": "nmwbqf4tv33n20h",
+    "text": "Enrich",
+    "children": [
+     {
+      "id": "nmwbqf4tvf8r3ti",
+      "text": "Markers and stickers",
+      "children": []
+     },
+     {
+      "id": "nmwbqf4tv5q414j",
+      "text": "Notes and links",
+      "children": [],
+      "note": "Notes appear in the Notes tab on the right. Hover the note icon to preview them.",
+      "link": "https://github.com/"
+     },
+     {
+      "id": "nmwbqf4tv5uq4ok",
+      "text": "Images",
+      "children": []
+     },
+     {
+      "id": "nmwbqf4tv6mz8rl",
+      "text": "Relationships and boundaries",
+      "children": []
+     }
+    ],
+    "icons": [
+     "💡"
+    ]
+   },
+   {
+    "id": "nmwbqf4tv8qkwfm",
+    "text": "Share",
+    "children": [
+     {
+      "id": "nmwbqf4tvc904fn",
+      "text": "PNG, SVG and PDF",
+      "children": [],
+      "tags": [
+       "export"
+      ]
+     },
+     {
+      "id": "nmwbqf4tv4t2boo",
+      "text": "Markdown, OPML, FreeMind",
+      "children": []
+     },
+     {
+      "id": "nmwbqf4tvr7zfgp",
+      "text": "Opens XMind files",
+      "children": []
+     },
+     {
+      "id": "nmwbqf4tv2odu0q",
+      "text": "Presentation mode",
+      "children": []
+     }
+    ],
+    "icons": [
+     "🚀"
+    ],
+    "collapsed": false
+   }
+  ]
+ },
+ "floating": [
+  {
+   "id": "nmwbqf7epsbtcsw",
+   "text": "Loose idea",
+   "children": [],
+   "x": -678,
+   "y": -400
+  }
+ ],
+ "relations": [
+  {
+   "id": "nmwbqf4tvl7nxxs",
+   "from": "nmwbqf4tvktbub2",
+   "to": "nmwbqf4tv8qkwfm",
+   "label": "then"
+  },
+  {
+   "id": "nmwbqf7xylqy5px",
+   "from": "nmwbqf5ea0ng2nt",
+   "to": "nmwbqf4tv8qkwfm",
+   "label": "feeds"
+  }
+ ],
+ "settings": {
+  "theme": "fresh",
+  "layout": "mindmap",
+  "lineStyle": "tapered",
+  "pattern": "dots",
+  "font": "system",
+  "shapes": {
+   "root": "rounded",
+   "main": "rounded",
+   "sub": "rounded"
+  },
+  "rainbow": null,
+  "hGap": 56,
+  "vGap": 14,
+  "lineWidth": 2,
+  "maxWidth": 260,
+  "fontScale": 1
+ }
+}

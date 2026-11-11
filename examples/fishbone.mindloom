@@ -1,0 +1,78 @@
+{
+ "app": "mindloom",
+ "version": 1,
+ "root": {
+  "id": "nmwbqgmf39ufdvy",
+  "text": "Problem",
+  "children": [
+   {
+    "id": "nmwbqgmf3gplkbz",
+    "text": "People",
+    "children": [
+     {
+      "id": "nmwbqgmf3u5i5a10",
+      "text": "Training",
+      "children": []
+     }
+    ]
+   },
+   {
+    "id": "nmwbqgmf3kxc3011",
+    "text": "Process",
+    "children": [
+     {
+      "id": "nmwbqgmf3yelo812",
+      "text": "Approval delays",
+      "children": []
+     }
+    ]
+   },
+   {
+    "id": "nmwbqgmf37qn6k13",
+    "text": "Tools",
+    "children": [
+     {
+      "id": "nmwbqgmf32kw9j14",
+      "text": "Outdated software",
+      "children": []
+     }
+    ]
+   },
+   {
+    "id": "nmwbqgmf3x5ewt15",
+    "text": "Materials",
+    "children": []
+   },
+   {
+    "id": "nmwbqgmf3q5n5o16",
+    "text": "Environment",
+    "children": []
+   },
+   {
+    "id": "nmwbqgmf32pq0p17",
+    "text": "Measurement",
+    "children": []
+   }
+  ]
+ },
+ "floating": [],
+ "relations": [],
+ "settings": {
+  "theme": "sunset",
+  "layout": "fishbone",
+  "lineStyle": "straight",
+  "pattern": "dots",
+  "font": "system",
+  "shapes": {
+   "root": "rounded",
+   "main": "rounded",
+   "sub": "underline"
+  },
+  "rainbow": null,
+  "hGap": 56,
+  "vGap": 14,
+  "lineWidth": 2,
+  "maxWidth": 260,
+  "fontScale": 1
+ }
+}

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5b7cfa"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#bg)"/>
+  <g fill="none" stroke-linecap="round" stroke-width="30">
+    <path d="M512 512 C 610 512 600 330 716 330" stroke="#ffd43b"/>
+    <path d="M512 512 C 620 512 620 512 736 512" stroke="#69db7c"/>
+    <path d="M512 512 C 610 512 600 694 716 694" stroke="#ff8787"/>
+    <path d="M512 512 C 414 512 424 390 308 390" stroke="#66d9e8"/>
+    <path d="M512 512 C 414 512 424 634 308 634" stroke="#ffa94d"/>
+  </g>
+  <circle cx="716" cy="330" r="46" fill="#ffd43b"/>
+  <circle cx="742" cy="512" r="46" fill="#69db7c"/>
+  <circle cx="716" cy="694" r="46" fill="#ff8787"/>
+  <circle cx="308" cy="390" r="46" fill="#66d9e8"/>
+  <circle cx="308" cy="634" r="46" fill="#ffa94d"/>
+  <circle cx="512" cy="512" r="104" fill="#ffffff"/>
+  <circle cx="512" cy="512" r="46" fill="#5b7cfa"/>
+</svg>

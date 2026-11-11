@@ -1,0 +1,106 @@
+{
+ "app": "mindloom",
+ "version": 1,
+ "root": {
+  "id": "nmwbqgmf2wqbfvk",
+  "text": "SWOT Analysis",
+  "children": [
+   {
+    "id": "nmwbqgmf2a87lbl",
+    "text": "Strengths",
+    "children": [
+     {
+      "id": "nmwbqgmf2i0d05m",
+      "text": "Brand",
+      "children": []
+     },
+     {
+      "id": "nmwbqgmf2jh28mn",
+      "text": "Team",
+      "children": []
+     }
+    ],
+    "icons": [
+     "👍"
+    ]
+   },
+   {
+    "id": "nmwbqgmf2hi46ro",
+    "text": "Weaknesses",
+    "children": [
+     {
+      "id": "nmwbqgmf2fr6pdp",
+      "text": "Budget",
+      "children": []
+     },
+     {
+      "id": "nmwbqgmf2l3z27q",
+      "text": "Reach",
+      "children": []
+     }
+    ],
+    "icons": [
+     "👎"
+    ]
+   },
+   {
+    "id": "nmwbqgmf2eip0qr",
+    "text": "Opportunities",
+    "children": [
+     {
+      "id": "nmwbqgmf2dc4ccs",
+      "text": "New markets",
+      "children": []
+     },
+     {
+      "id": "nmwbqgmf2cx24vt",
+      "text": "Partnerships",
+      "children": []
+     }
+    ],
+    "icons": [
+     "🚀"
+    ]
+   },
+   {
+    "id": "nmwbqgmf2gd8q0u",
+    "text": "Threats",
+    "children": [
+     {
+      "id": "nmwbqgmf22uf3kv",
+      "text": "Competitors",
+      "children": []
+     },
+     {
+      "id": "nmwbqgmf2rtm07w",
+      "text": "Regulation",
+      "children": []
+     }
+    ],
+    "icons": [
+     "⚠️"
+    ]
+   }
+  ]
+ },
+ "floating": [],
+ "relations": [],
+ "settings": {
+  "theme": "classic",
+  "layout": "mindmap",
+  "lineStyle": "curve",
+  "pattern": "dots",
+  "font": "system",
+  "shapes": {
+   "root": "rounded",
+   "main": "rounded",
+   "sub": "rounded"
+  },
+  "rainbow": true,
+  "hGap": 56,
+  "vGap": 14,
+  "lineWidth": 2,
+  "maxWidth": 260,
+  "fontScale": 1
+ }
+}

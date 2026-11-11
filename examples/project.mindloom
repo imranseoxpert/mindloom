@@ -1,0 +1,136 @@
+{
+ "app": "mindloom",
+ "version": 1,
+ "root": {
+  "id": "nmwbqgmf0c5cj51",
+  "text": "Project Launch",
+  "children": [
+   {
+    "id": "nmwbqgmf0h4vvn2",
+    "text": "Goals",
+    "children": [
+     {
+      "id": "nmwbqgmf0pxgad3",
+      "text": "Objective",
+      "children": []
+     },
+     {
+      "id": "nmwbqgmf0g3e014",
+      "text": "Success metrics",
+      "children": []
+     }
+    ]
+   },
+   {
+    "id": "nmwbqgmf083mr25",
+    "text": "Phase 1 · Discovery",
+    "children": [
+     {
+      "id": "nmwbqgmf0ga04m6",
+      "text": "Research",
+      "children": [],
+      "task": "done"
+     },
+     {
+      "id": "nmwbqgmf0k2ccm7",
+      "text": "Requirements",
+      "children": [],
+      "task": "todo"
+     }
+    ],
+    "icons": [
+     "pr50"
+    ]
+   },
+   {
+    "id": "nmwbqgmf04aehg8",
+    "text": "Phase 2 · Build",
+    "children": [
+     {
+      "id": "nmwbqgmf0ln0tb9",
+      "text": "Design",
+      "children": [],
+      "task": "todo"
+     },
+     {
+      "id": "nmwbqgmf0tt40ga",
+      "text": "Development",
+      "children": [],
+      "task": "todo"
+     },
+     {
+      "id": "nmwbqgmf0fc0dpb",
+      "text": "Testing",
+      "children": [],
+      "task": "todo"
+     }
+    ],
+    "icons": [
+     "pr0"
+    ]
+   },
+   {
+    "id": "nmwbqgmf01mrr1c",
+    "text": "Phase 3 · Launch",
+    "children": [
+     {
+      "id": "nmwbqgmf0nuuvkd",
+      "text": "Marketing",
+      "children": [],
+      "task": "todo"
+     },
+     {
+      "id": "nmwbqgmf0vgewke",
+      "text": "Release",
+      "children": [],
+      "task": "todo"
+     }
+    ]
+   },
+   {
+    "id": "nmwbqgmf07mhrof",
+    "text": "Team",
+    "children": [
+     {
+      "id": "nmwbqgmf0vtd6mg",
+      "text": "Owner",
+      "children": []
+     },
+     {
+      "id": "nmwbqgmf0erp5yh",
+      "text": "Stakeholders",
+      "children": []
+     }
+    ]
+   },
+   {
+    "id": "nmwbqgmf0bponci",
+    "text": "Risks",
+    "children": [],
+    "icons": [
+     "⚠️"
+    ]
+   }
+  ]
+ },
+ "floating": [],
+ "relations": [],
+ "settings": {
+  "theme": "business",
+  "layout": "right",
+  "lineStyle": "rounded",
+  "pattern": "dots",
+  "font": "system",
+  "shapes": {
+   "root": "rounded",
+   "main": "rect",
+   "sub": "underline"
+  },
+  "rainbow": null,
+  "hGap": 56,
+  "vGap": 14,
+  "lineWidth": 2,
+  "maxWidth": 260,
+  "fontScale": 1
+ }
+}

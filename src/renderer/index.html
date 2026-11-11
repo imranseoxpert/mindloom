@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self' data:" />
+  <title>Mindloom</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header id="toolbar">
+    <div class="tb-title" id="doc-title"><span class="logo">◉</span><span id="doc-name">Untitled</span><span id="dirty-dot" title="Unsaved changes"></span></div>
+    <div class="tb-group">
+      <button data-cmd="templates" data-icon="new" title="New from template (⌘N)"><span>New</span></button>
+      <button data-cmd="open" data-icon="open" title="Open… (⌘O)"><span>Open</span></button>
+      <button data-cmd="save" data-icon="save" title="Save (⌘S)"><span>Save</span></button>
+    </div>
+    <div class="tb-group">
+      <button data-cmd="undo" data-icon="undo" title="Undo (⌘Z)"><span>Undo</span></button>
+      <button data-cmd="redo" data-icon="redo" title="Redo (⇧⌘Z)"><span>Redo</span></button>
+    </div>
+    <div class="tb-group">
+      <button data-cmd="addSibling" data-icon="topic" title="Add topic (Enter)"><span>Topic</span></button>
+      <button data-cmd="addChild" data-icon="subtopic" title="Add subtopic (Tab)"><span>Subtopic</span></button>
+      <button data-cmd="relation" data-icon="relation" title="Relationship (⇧⌘R)"><span>Relation</span></button>
+      <button data-cmd="boundary" data-icon="boundary" title="Boundary (⇧⌘B)"><span>Boundary</span></button>
+      <button data-cmd="note" data-icon="note" title="Note (⇧⌘M)"><span>Note</span></button>
+      <button data-cmd="link" data-icon="link" title="Link (⌘K)"><span>Link</span></button>
+      <button data-cmd="image" data-icon="image" title="Insert image"><span>Image</span></button>
+      <button data-cmd="markers" data-icon="marker" title="Markers & stickers"><span>Marker</span></button>
+    </div>
+    <div class="tb-group">
+      <button data-cmd="mapPanel" data-icon="structure" title="Structure, theme & style"><span>Style</span></button>
+      <button data-cmd="ai" data-icon="ai" title="AI assistant"><span>AI</span></button>
+      <button data-cmd="focus" data-icon="focus" title="Focus on branch (⇧⌘F)"><span>Focus</span></button>
+      <button data-cmd="present" data-icon="present" title="Presentation (F5)"><span>Present</span></button>
+      <button data-cmd="exportMenu" data-icon="export" title="Export"><span>Export</span></button>
+    </div>
+    <div class="tb-spacer"></div>
+    <div class="tb-group right">
+      <button data-cmd="find" data-icon="search" title="Find (⌘F)"></button>
+      <button data-cmd="toggleOutline" data-icon="outline" title="Outline panel"></button>
+      <button data-cmd="toggleInspector" data-icon="sliders" title="Format panel"></button>
+      <button data-cmd="toggleUiTheme" data-icon="moon" title="Light / dark interface"></button>
+      <button data-cmd="shortcuts" data-icon="help" title="Keyboard shortcuts (F1)"></button>
+    </div>
+  </header>
+
+  <main id="main">
+    <aside id="outline" class="panel left">
+      <div class="panel-head"><b>Outline</b><button class="icon-btn" data-cmd="toggleOutline" title="Close">✕</button></div>
+      <div id="outline-tree" class="outline-tree" tabindex="-1"></div>
+    </aside>
+
+    <section id="stage" tabindex="0">
+      <svg id="canvas" xmlns="http://www.w3.org/2000/svg"><g id="viewport"></g><g id="drag-layer"></g></svg>
+      <textarea id="editor" spellcheck="true" rows="1"></textarea>
+      <div id="focus-bar" hidden><span>Focused on <b id="focus-name"></b></span><button data-cmd="focus">Show whole map</button></div>
+      <div id="mode-hint" hidden></div>
+      <div id="searchbar" hidden>
+        <input id="search-input" placeholder="Find in map…" />
+        <span id="search-count"></span>
+        <button class="icon-btn" id="search-prev" title="Previous">↑</button>
+        <button class="icon-btn" id="search-next" title="Next">↓</button>
+        <button class="icon-btn" id="search-close" title="Close">✕</button>
+      </div>
+      <div id="zoombar">
+        <button class="icon-btn" data-cmd="zoomOut" title="Zoom out (⌘−)">−</button>
+        <button id="zoom-label" data-cmd="actualSize" title="Reset zoom">100%</button>
+        <button class="icon-btn" data-cmd="zoomIn" title="Zoom in (⌘+)">+</button>
+        <button class="icon-btn" data-cmd="fit" title="Fit map (⌘0)" data-icon="fit"></button>
+        <button class="icon-btn" data-cmd="toggleMinimap" title="Mini map" data-icon="map"></button>
+      </div>
+      <canvas id="minimap" width="200" height="130"></canvas>
+      <div id="present-bar" hidden>
+        <button data-cmd="presentPrev">‹</button><span id="present-count"></span><button data-cmd="presentNext">›</button><button data-cmd="presentExit">Exit</button>
+      </div>
+    </section>
+
+    <aside id="inspector" class="panel right">
+      <div class="tabs" id="insp-tabs">
+        <button data-tab="topic" class="active">Topic</button>
+        <button data-tab="map">Map</button>
+        <button data-tab="markers">Markers</button>
+        <button data-tab="notes">Notes</button>
+      </div>
+      <div id="insp-body" class="insp-body"></div>
+    </aside>
+  </main>
+
+  <footer id="statusbar">
+    <span id="st-stats"></span>
+    <span id="st-hint">Tab: subtopic · Enter: topic · Double-click canvas: floating topic · Drag topics to re-arrange</span>
+    <span id="st-save"></span>
+  </footer>
+
+  <div id="ctxmenu" class="menu" hidden></div>
+  <div id="toast" hidden></div>
+  <div id="modal-root"></div>
+
+  <script src="core/themes.js"></script>
+  <script src="core/model.js"></script>
+  <script src="core/layout.js"></script>
+  <script src="core/render.js"></script>
+  <script src="core/io.js"></script>
+  <script src="core/templates.js"></script>
+  <script src="ui/platform.js"></script>
+  <script src="ui/icons.js"></script>
+  <script src="ui/app.js"></script>
+  <script src="ui/panels.js"></script>
+  <script src="ui/boot.js"></script>
+</body>
+</html>
