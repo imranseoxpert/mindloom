@@ -54,3 +54,22 @@ clean. Screenshots: `docs/screenshots/`.
 - New Window starts a second process.
 
 **Next:** packaging and CI (.dmg universal, .exe installer), then checkpoint 3 before publishing 2.0.0.
+
+# Handoff — packaging, 2026-11-27 (before checkpoint 3)
+
+**Done:** `rust/packaging/macos/build.sh` makes a universal (arm64 + x86_64), ad-hoc signed `Mindloom.app` and
+`Mindloom-2.0.0-mac-universal.dmg` (30 MB) with document types for .mindloom (owner) and .xmind/.mm/.opml.
+Files double-clicked in Finder open, at launch and while running (`app/src/mac.rs`; verified with `open`).
+`rust/packaging/windows/mindloom.iss` makes `Mindloom-2.0.0-win-x64.exe` (12 MB, per-user install, file
+associations, Start menu entry, uninstaller); CI also makes `Mindloom-2.0.0-win-x64-portable.zip`. The exe carries
+the icon and version info (`app/build.rs`). HTTPS uses the operating system's TLS (no C crypto library).
+
+`.github/workflows/rust-release.yml` runs on pushes to `rust-2*` branches, by hand, and on `v2*` tags: fmt,
+clippy, tests, the builds, and the self test on both macOS and Windows runners (18/18 on both, screenshots kept
+as artifacts). A `v2*` tag also creates a *draft* release with the installers.
+
+**Still not verified:** the installers have only run on GitHub runners and this Mac (the Windows installer itself
+has not been run interactively); the AI assistant has made no live call. Neither installer is signed with a paid
+certificate (same as 1.x).
+
+**To publish 2.0.0:** merge `rust-2.0` into `main`, tag `v2.0.0`, review the draft release, publish it.

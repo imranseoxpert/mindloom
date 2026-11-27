@@ -11,7 +11,7 @@ Goal: Mindloom as a pure Rust desktop app (macOS, Windows), released as 2.0.0. D
 | Interface: canvas, editing, drag, panels, dialogs | `rust/app` (`canvas.rs`, `stage.rs`, `state.rs`, `ui.rs`) | done — self test 18/18 (2026-11-27) |
 | Shell: files, recent, autosave, menus, PNG/PDF export | `rust/app` (`files.rs`, `main.rs`) | done (2026-11-27) |
 | AI assistant (BYOK, 11 providers) | `rust/app/ai.rs` | done — not run against a live API yet |
-| Packaging + CI (.dmg, .exe) | `.github/workflows/rust-release.yml` | open |
+| Packaging + CI (.dmg, .exe) | `rust/packaging/`, `.github/workflows/rust-release.yml` | done — CI green on macOS and Windows, self test 18/18 on both (2026-11-27) |
 
 Checkpoints (ADR-009): 1 engine matches (reached 2026-11-27) · 2 interface works (reached 2026-11-27) · 3 before 2.0.0.
 
