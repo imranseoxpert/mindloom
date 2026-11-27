@@ -1,0 +1,16 @@
+[package]
+name = "mindloom-core"
+description = "Mindloom's mind map engine: document model, nine layouts, SVG renderer, import and export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+regex = "1"
+miniz_oxide = "0.8"
+
+[dev-dependencies]
+flate2 = "1"

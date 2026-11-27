@@ -1,0 +1,133 @@
+# Mindloom 2 (Rust): test, build the macOS .dmg and the Windows installer, and on a v2* tag attach them to a
+# draft GitHub release. Pushes to rust-2* branches and manual runs keep the files as workflow artifacts.
+name: Mindloom 2 builds
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["rust-2*"]
+    tags: ["v2*"]
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    working-directory: rust
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  macos:
+    name: macOS (universal .dmg)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Format and lint
+        run: |
+          cargo fmt --check
+          cargo clippy --release --all-targets -- -D warnings
+      - name: Tests (engine replay of 1.x recordings, app unit tests)
+        run: cargo test --release
+      - name: Build Mindloom.app and the .dmg
+        run: packaging/macos/build.sh
+      - name: Self test (drives the real interface, saves screenshots)
+        timeout-minutes: 8
+        continue-on-error: true
+        run: |
+          mkdir -p selftest
+          MINDLOOM_SELFTEST="$PWD/selftest" MINDLOOM_CONFIG_DIR="$RUNNER_TEMP/mlcfg" dist/Mindloom.app/Contents/MacOS/mindloom
+          cat selftest/report.txt
+          grep -q " 0 failed" selftest/report.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mindloom-macos
+          path: rust/dist/*.dmg
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: selftest-macos
+          path: rust/selftest/
+
+  windows:
+    name: Windows (installer + portable)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Lint
+        run: cargo clippy --release --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test --release
+      - name: Build Mindloom.exe
+        run: cargo build --release -p mindloom
+      - name: Installer (Inno Setup) and portable zip
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
+            choco install innosetup --no-progress -y
+            $env:PATH += ";C:\Program Files (x86)\Inno Setup 6"
+          }
+          iscc /DAppVersion=$version packaging\windows\mindloom.iss
+          New-Item -ItemType Directory -Force portable | Out-Null
+          Copy-Item target\release\mindloom.exe portable\Mindloom.exe
+          Copy-Item ..\LICENSE portable\LICENSE.txt
+          Compress-Archive -Path portable\* -DestinationPath "dist\Mindloom-$version-win-x64-portable.zip" -Force
+          Get-ChildItem dist
+      - name: Self test (drives the real interface, saves screenshots)
+        timeout-minutes: 8
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force selftest | Out-Null
+          $env:MINDLOOM_SELFTEST = "$PWD\selftest"
+          $env:MINDLOOM_CONFIG_DIR = "$env:RUNNER_TEMP\mlcfg"
+          Start-Process -FilePath target\release\mindloom.exe -Wait
+          Get-Content selftest\report.txt
+          if (-not (Select-String -Path selftest\report.txt -Pattern ' 0 failed' -Quiet)) { exit 1 }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mindloom-windows
+          path: |
+            rust/dist/*.exe
+            rust/dist/*.zip
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: selftest-windows
+          path: rust/selftest/
+
+  release:
+    name: Draft release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: mindloom-*
+          merge-multiple: true
+          path: out
+      - name: Create a draft release with the installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" --draft \
+            --title "Mindloom ${GITHUB_REF_NAME#v}" --notes "Mindloom ${GITHUB_REF_NAME#v}, rewritten in Rust."

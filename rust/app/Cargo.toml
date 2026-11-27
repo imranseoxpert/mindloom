@@ -1,0 +1,37 @@
+[package]
+name = "mindloom"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+arboard = "3.7.0"
+base64 = "0.23.1"
+directories = "6.0.0"
+eframe = "0.36"
+egui = "0.36"
+egui-phosphor = "0.14.0"
+image = "0.25.10"
+keyring = "4.2.0"
+lyon_tessellation = "1.0.23"
+mindloom-core = { version = "2.0.0", path = "../core" }
+regex = "1.13.2"
+reqwest = { version = "0.13.5", default-features = false, features = ["blocking", "json", "native-tls", "charset", "http2", "system-proxy"] }
+resvg = "0.45"
+rfd = "0.18.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+svg2pdf = "0.13.0"
+url = "2.5.9"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSURL", "NSString", "NSThread"] }
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSResponder", "NSRunningApplication"] }
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+[package.metadata.mindloom]
+bundle-id = "io.github.imranseoxpert.mindloom"
