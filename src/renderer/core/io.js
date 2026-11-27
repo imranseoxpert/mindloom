@@ -121,9 +121,10 @@
         const text = n.text.replace(/\n/g, ' ');
         const task = n.task ? (n.task === 'done' ? '[x] ' : '[ ] ') : '';
         const link = n.link ? ` ([link](${n.link}))` : '';
-        if (d === 0) out.push(`# ${text}${link}`, '');
-        else if (d === 1) out.push(`## ${task}${text}${link}`, '');
-        else out.push(`${'  '.repeat(d - 2)}- ${task}${text}${link}`);
+        const due = n.due ? ` (due: ${n.due})` : '';
+        if (d === 0) out.push(`# ${text}${link}${due}`, '');
+        else if (d === 1) out.push(`## ${task}${text}${link}${due}`, '');
+        else out.push(`${'  '.repeat(d - 2)}- ${task}${text}${link}${due}`);
         if (n.note) {
           const pad = d >= 2 ? '  '.repeat(d - 1) : '';
           out.push(...n.note.split('\n').map((l) => `${pad}> ${l}`));
@@ -180,9 +181,12 @@
       const tm = /^\[([ xX])\]\s+/.exec(s);
       if (tm) { task = tm[1] === ' ' ? 'todo' : 'done'; s = s.slice(tm[0].length); }
       const lm = /\[[^\]]*\]\((https?:[^)]+)\)/.exec(s);
+      const dm = /\(due:\s*(\d{4}-\d{2}-\d{2})\)/.exec(s);
+      if (dm) s = s.replace(dm[0], '').trim();
       const n = M.createNode(clean(s));
       if (task) n.task = task;
       if (lm) n.link = lm[1];
+      if (dm && M.isDateStr(dm[1])) n.due = dm[1];
       return n;
     }
     if (!roots.length) throw new Error('No headings or list items found');
@@ -193,7 +197,7 @@
   function toOPML(doc) {
     const rec = (n, d, fl) => {
       const pad = '  '.repeat(d + 2);
-      const note = (n.note ? ` _note="${xmlEsc(n.note)}"` : '') + (fl ? ' _floating="true"' : '');
+      const note = (n.note ? ` _note="${xmlEsc(n.note)}"` : '') + (n.due ? ` _due="${xmlEsc(n.due)}"` : '') + (fl ? ' _floating="true"' : '');
       if (!n.children.length) return `${pad}<outline text="${xmlEsc(n.text)}"${note}/>\n`;
       return `${pad}<outline text="${xmlEsc(n.text)}"${note}>\n${n.children.map((c) => rec(c, d + 1)).join('')}${pad}</outline>\n`;
     };
@@ -207,6 +211,7 @@
     const conv = (el) => {
       const n = M.createNode(el.attrs.text || el.attrs.title || '');
       if (el.attrs._note) n.note = el.attrs._note;
+      if (el.attrs._due && M.isDateStr(el.attrs._due)) n.due = el.attrs._due;
       n.children = kids(el, 'outline').map(conv);
       return n;
     };
@@ -346,6 +351,156 @@
     return docFromTree(conv(top));
   }
 
+  // ---------- CSV (spreadsheet export / import) ----------
+  const csvCell = (v) => {
+    const s = String(v == null ? '' : v);
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+
+  /** One row per topic, so a map opens cleanly in Excel / Google Sheets / Numbers. */
+  function toCSV(doc) {
+    const head = ['Topic', 'Path', 'Depth', 'Task', 'Due', 'Priority', 'Progress', 'Labels', 'Link', 'Note'];
+    const rows = [head.join(',')];
+    const emit = (tree, floating) => {
+      const walkPath = (n, path, d) => {
+        const here = path.concat([n.text.replace(/\n/g, ' ')]);
+        const pri = (n.icons || []).find((m) => /^p\d$/.test(m));
+        const prog = (n.icons || []).find((m) => /^pr\d+$/.test(m));
+        rows.push([
+          n.text.replace(/\n/g, ' '),
+          (floating ? '(floating) ' : '') + here.join(' > '),
+          d,
+          n.task === 'done' ? 'Done' : n.task === 'todo' ? 'To do' : '',
+          n.due || '',
+          pri ? pri.slice(1) : '',
+          prog ? prog.slice(2) + '%' : '',
+          (n.tags || []).join('; '),
+          n.link || '',
+          (n.note || '').replace(/\n/g, ' '),
+        ].map(csvCell).join(','));
+        n.children.forEach((c) => walkPath(c, here, d + 1));
+      };
+      walkPath(tree, [], 0);
+    };
+    M.trees(doc).forEach((t, i) => emit(t, i > 0));
+    return rows.join('\r\n') + '\r\n';
+  }
+
+  /** Minimal RFC 4180 parser: quoted cells, embedded commas / quotes / newlines, CRLF or LF. */
+  function parseCSV(text) {
+    const rows = [];
+    let row = [], cell = '', quoted = false;
+    const s = String(text).replace(/^\uFEFF/, '');
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (quoted) {
+        if (ch === '"') { if (s[i + 1] === '"') { cell += '"'; i++; } else quoted = false; }
+        else cell += ch;
+      } else if (ch === '"') quoted = true;
+      else if (ch === ',') { row.push(cell); cell = ''; }
+      else if (ch === '\n' || ch === '\r') {
+        if (ch === '\r' && s[i + 1] === '\n') i++;
+        row.push(cell); cell = '';
+        if (row.length > 1 || row[0] !== '') rows.push(row);
+        row = [];
+      } else cell += ch;
+    }
+    row.push(cell);
+    if (row.length > 1 || row[0] !== '') rows.push(row);
+    return rows;
+  }
+
+  /**
+   * Import a CSV. Mindloom's own export round-trips (Depth rebuilds the tree; Task / Due / Labels /
+   * Link / Note are restored). A foreign CSV just needs a Topic / Title / Name column: rows become
+   * topics under one root, nested by a Depth / Level column when there is one.
+   */
+  function fromCSV(text) {
+    const rows = parseCSV(text);
+    if (rows.length < 2) throw new Error('CSV has no data rows');
+    const head = rows[0].map((h) => h.trim().toLowerCase());
+    const col = (...names) => { for (const nm of names) { const i = head.indexOf(nm); if (i >= 0) return i; } return -1; };
+    const ciTopic = col('topic', 'title', 'name', 'task name', 'subject');
+    if (ciTopic < 0) throw new Error('CSV needs a Topic column');
+    const ciDepth = col('depth', 'level', 'indent');
+    const ciTask = col('task', 'status', 'state');
+    const ciDue = col('due', 'due date', 'deadline', 'date');
+    const ciTags = col('labels', 'tags', 'label', 'tag');
+    const ciLink = col('link', 'url', 'hyperlink');
+    const ciNote = col('note', 'notes', 'description', 'details');
+    const get = (r, i) => (i >= 0 && r[i] != null ? String(r[i]).trim() : '');
+    const nodes = [];
+    for (const r of rows.slice(1)) {
+      const topic = get(r, ciTopic);
+      if (!topic) continue;
+      const n = M.createNode(topic);
+      const task = get(r, ciTask).toLowerCase();
+      if (/done|complete|closed|yes|x/.test(task)) n.task = 'done';
+      else if (task) n.task = 'todo';
+      const due = get(r, ciDue);
+      if (M.isDateStr(due)) n.due = due;
+      const tags = get(r, ciTags);
+      if (tags) n.tags = tags.split(/[;|]/).map((x) => x.trim()).filter(Boolean);
+      const link = get(r, ciLink);
+      if (/^https?:\/\//i.test(link)) n.link = link;
+      const note = get(r, ciNote);
+      if (note) n.note = note;
+      let depth = parseInt(get(r, ciDepth), 10);
+      if (!Number.isFinite(depth) || depth < 0) depth = nodes.length ? 1 : 0;
+      nodes.push({ node: n, depth });
+    }
+    if (!nodes.length) throw new Error('CSV has no topics');
+    // Rebuild from depths: the first depth-0 row is the root; a later depth-0 row starts a
+    // floating tree (Mindloom's own CSV marks them in the Path column); deeper rows nest
+    // under the last shallower one.
+    let root = null;
+    const floating = [];
+    let stack = [];
+    for (const { node, depth } of nodes) {
+      if (depth === 0 || !stack.length) {
+        if (!root) root = node;
+        else { node._place = true; floating.push(node); }
+        stack = [{ node, depth: 0 }];
+        continue;
+      }
+      while (stack.length > 1 && stack[stack.length - 1].depth >= depth) stack.pop();
+      stack[stack.length - 1].node.children.push(node);
+      stack.push({ node, depth });
+    }
+    return docFromTree(root, floating);
+  }
+
+  // ---------- standalone HTML (viewable in any browser, no Mindloom needed) ----------
+  function toHTML(doc, svg) {
+    const escH = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const s = M.stats(doc);
+    const list = (n) => {
+      const badges = [
+        n.task ? `<span class="badge">${n.task === 'done' ? '☑ done' : '☐ to do'}</span>` : '',
+        n.due ? `<span class="badge${M.isOverdue(n) ? ' overdue' : ''}">📅 ${escH(M.formatDue(n.due))}${M.isOverdue(n) ? ' — overdue' : ''}</span>` : '',
+        (n.tags || []).map((t) => `<span class="badge">${escH(t)}</span>`).join(''),
+        n.link ? `<a href="${escH(n.link)}" rel="noopener">link</a>` : '',
+      ].filter(Boolean).join(' ');
+      const note = n.note ? `<div class="note">${escH(n.note).replace(/\n/g, '<br/>')}</div>` : '';
+      const kids = n.children.length ? `<ul>${n.children.map(list).join('')}</ul>` : '';
+      return `<li><span class="topic">${escH(n.text) || 'Topic'}</span>${badges ? ' ' + badges : ''}${note}${kids}</li>`;
+    };
+    const title = doc.root.text || 'Mind map';
+    return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>${escH(title)} — Mindloom</title>
+<style>body{font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;margin:0;padding:32px 20px 60px;background:#f6f7fb;color:#1d2440}main{max-width:980px;margin:0 auto}h1{font-size:26px;margin:0 0 6px}.meta{color:#5c677d;font-size:13px;margin-bottom:20px}.map{background:#fff;border:1px solid #dfe3ee;border-radius:12px;padding:12px;overflow:auto}.map svg{max-width:100%;height:auto}h2{font-size:18px;margin:28px 0 8px}ul{margin:6px 0 6px 18px;padding:0}li{margin:5px 0;line-height:1.55}.topic{font-weight:600}.badge{display:inline-block;background:#eef1f8;border-radius:999px;padding:1px 8px;font-size:11.5px;font-weight:600;color:#3c4666}.badge.overdue{background:#e03131;color:#fff}.note{color:#5c677d;font-size:13.5px;margin:3px 0 3px 2px}footer{color:#8a93ad;font-size:12px;margin-top:36px}</style>
+</head><body><main>
+<h1>${escH(title)}</h1>
+<div class="meta">${s.nodes} topics · ${s.words} words${s.tasks ? ` · ${s.done}/${s.tasks} tasks done` : ''}${s.overdue ? ` · ${s.overdue} overdue` : ''}</div>
+${svg ? `<div class="map">${svg}</div>` : ''}
+<h2>Outline</h2>
+<ul>${M.trees(doc).map(list).join('')}</ul>
+<footer>Exported from Mindloom — a fast, friendly mind mapping app.</footer>
+</main></body></html>
+`;
+  }
+
   // ---------- detection ----------
   function importText(name, text) {
     const ext = (name.split('.').pop() || '').toLowerCase();
@@ -355,6 +510,7 @@
       return M.normalizeDoc(d.doc && d.doc.root ? d.doc : d);
     }
     if (ext === 'opml' || /<opml[\s>]/i.test(trimmed.slice(0, 300))) return fromOPML(text);
+    if (ext === 'csv') return fromCSV(text);
     if (ext === 'mm' || /^<map[\s>]/i.test(trimmed)) return fromFreeMind(text);
     if (ext === 'md' || ext === 'markdown' || /^#\s/m.test(trimmed)) return fromMarkdown(text);
     return fromText(text);
@@ -367,6 +523,6 @@
 
   ML.io = {
     parseXML, parseIndented, fromText, toText, toMarkdown, fromMarkdown, toOPML, fromOPML, toFreeMind, fromFreeMind,
-    fromXMind, unzip, importText, serialize,
+    fromXMind, unzip, importText, serialize, toCSV, fromCSV, parseCSV, toHTML,
   };
 })(typeof module !== 'undefined' && module.exports ? (global.ML = global.ML || {}) : (window.ML = window.ML || {}));

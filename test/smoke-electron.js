@@ -364,6 +364,23 @@ exports.run = async function run(win, { svgToPdf }) {
     await js('ML.app.run("find"); const i = document.getElementById("search-input"); i.value = "theme"; i.dispatchEvent(new Event("input")); true');
     check('search finds topics', (await js('ML.app.matches.length')) >= 1);
     await js('document.getElementById("search-close").click(); true');
+
+    // ---- v1.2: due dates, find & replace, numbering, CSV / HTML ----
+    await js('(() => { const a = __t.byText("Alpha"); a.due = "2000-01-05"; ML.app.commit(); })(); true');
+    check('a past due date renders as a red overdue chip', await js(`(() => { const a = __t.byText("Alpha"); const g = document.querySelector('.node[data-id="' + a.id + '"]'); return !!g && !!g.querySelector('.tag.due.overdue') && ML.model.stats(ML.app.doc).overdue >= 1 && __t.domOk(); })()`));
+    await js('ML.app.select(__t.byText("Alpha").id); ML.app.emit("show-tab", "topic"); true');
+    await sleep(120);
+    check('the inspector shows a due-date field with the date in it', await js('(() => { const f = document.querySelector(\'#insp-body [data-field="due"]\'); return !!f && f.value === "2000-01-05"; })()'));
+    await js('ML.app.run("find"); const si = document.getElementById("search-input"); si.value = "Alpha"; si.dispatchEvent(new Event("input")); document.getElementById("replace-input").value = "Alpine"; document.getElementById("replace-all").click(); true');
+    await sleep(120);
+    check('find & replace renames every matching topic', await js('!!__t.byText("Alpine") && !__t.byText("Alpha")'));
+    await js('document.getElementById("search-close").click(); ML.app.run("undo"); true');
+    check('find & replace is one undo step', await js('!!__t.byText("Alpha") && !__t.byText("Alpine")'));
+    await js('ML.app.doc.settings.numbering = "on"; ML.app.commit(); true');
+    check('numbering shows outline numbers on topics', await js(`(() => { const g = document.querySelector('.node[data-id="' + __t.byText("Create").id + '"]'); return !!g && /^1\\s/.test(g.querySelector('.label').textContent.trim()) && __t.byText("Create").text === "Create" && __t.domOk(); })()`));
+    await js('ML.app.doc.settings.numbering = "off"; ML.app.commit(); true');
+    check('CSV and HTML exports carry the map', await js(`(() => { const csv = ML.io.toCSV(ML.app.doc); const back = ML.io.fromCSV(csv); const html = ML.io.toHTML(ML.app.doc, ML.app.exportData().svg);
+      return csv.startsWith('Topic,Path,Depth') && back.root.text === ML.app.doc.root.text && back.root.children.length === ML.app.doc.root.children.length && html.startsWith('<!doctype html>') && html.includes('<svg'); })()`));
     await js('ML.app.select(__t.byText("Organise").id); ML.app.run("copy"); ML.app.select(__t.byText("Share").id); ML.app.run("paste"); true');
     check('copy / paste duplicates a branch', await js('__t.byText("Share").children.some((c) => c.text === "Organise" && c.children.length === 4)'));
     await js('ML.app.run("undo"); true');

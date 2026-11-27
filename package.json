@@ -1,7 +1,7 @@
 {
   "name": "mindloom",
   "productName": "Mindloom",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "A fast, friendly mind mapping app for macOS and Windows",
   "main": "src/main/main.js",
   "homepage": "https://github.com/imranseoxpert/mindloom",
@@ -14,7 +14,7 @@
   "keywords": ["mind map", "mindmap", "brainstorm", "outline", "electron"],
   "scripts": {
     "start": "electron .",
-    "test": "node --test test/*.test.js",
+    "test": "node --test test/core.test.js",
     "test:app": "node scripts/run-smoke.js",
     "icon": "electron scripts/make-icon.js",
     "dist:mac": "electron-builder --mac",

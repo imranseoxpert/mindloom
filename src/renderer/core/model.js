@@ -25,6 +25,31 @@
     };
   }
 
+  // ---------- dates (due dates are plain YYYY-MM-DD strings, no timezone surprises) ----------
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function isDateStr(v) {
+    if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+    const [y, m, d] = v.split('-').map(Number);
+    if (m < 1 || m > 12 || d < 1 || d > 31) return false;
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+  }
+  function todayStr(now) {
+    const t = now || new Date();
+    const p = (x) => String(x).padStart(2, '0');
+    return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}`;
+  }
+  /** '2026-11-20' -> '20 Nov' (same year) or '20 Nov 2027'. */
+  function formatDue(due, now) {
+    if (!isDateStr(due)) return '';
+    const [y, m, d] = due.split('-').map(Number);
+    const base = `${d} ${MONTHS[m - 1]}`;
+    return y === (now || new Date()).getFullYear() ? base : `${base} ${y}`;
+  }
+  function isOverdue(node, now) {
+    return !!(node && isDateStr(node.due) && node.task !== 'done' && node.due < todayStr(now));
+  }
+
   const COLOR = /^(#[0-9a-f]{3,8}|transparent|rgba?\([\d\s.,%]+\))$/i;
   const num = (v, lo, hi) => { v = +v; return Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : null; };
   const oneOf = (v, list) => (list.includes(v) ? v : null);
@@ -58,6 +83,7 @@
     }
     if (n.side != null) drop(n, 'side', oneOf(n.side, ['left', 'right']));
     if (n.task != null) drop(n, 'task', oneOf(n.task, ['todo', 'done']));
+    if (n.due != null && !isDateStr(n.due)) delete n.due;
     for (const k of ['collapsed', 'boundary']) if (n[k] != null) { if (n[k]) n[k] = true; else delete n[k]; }
   }
 
@@ -71,6 +97,7 @@
     const shapes = T.SHAPES.map((x) => x.id);
     for (const k of ['root', 'main', 'sub']) s.shapes[k] = oneOf(s.shapes[k], shapes) || D.shapes[k];
     s.rainbow = s.rainbow == null ? null : !!s.rainbow;
+    s.numbering = oneOf(s.numbering, ['off', 'on']) || D.numbering || 'off';
     const lim = { hGap: [10, 300], vGap: [0, 120], lineWidth: [0.5, 12], maxWidth: [60, 1200], fontScale: [0.4, 3] };
     for (const k of Object.keys(lim)) { const v = num(s[k], lim[k][0], lim[k][1]); s[k] = v == null ? D[k] : v; }
   }
@@ -320,7 +347,43 @@
   }
 
   function plainText(n) {
-    return [n.text, n.note || '', (n.tags || []).join(' '), n.link || ''].join(' ').toLowerCase();
+    return [n.text, n.note || '', (n.tags || []).join(' '), n.link || '', n.due || '', n.due ? formatDue(n.due) : ''].join(' ').toLowerCase();
+  }
+
+  /**
+   * Replace every occurrence of `find` in topic text and notes (case-insensitive unless asked).
+   * Returns the number of replacements. Plain string matching — the search text is never a regex.
+   */
+  function replaceText(doc, find, replacement, opts) {
+    const needle = String(find == null ? '' : find);
+    if (!needle) return 0;
+    const cs = !!(opts && opts.caseSensitive);
+    const rep = String(replacement == null ? '' : replacement);
+    let count = 0;
+    const swap = (s) => {
+      if (!s) return s;
+      const hay = cs ? s : s.toLowerCase(), pin = cs ? needle : needle.toLowerCase();
+      let out = '', i = 0;
+      for (;;) {
+        const j = hay.indexOf(pin, i);
+        if (j < 0) return out + s.slice(i);
+        out += s.slice(i, j) + rep;
+        count++;
+        i = j + needle.length;
+      }
+    };
+    walkDoc(doc, (n) => { n.text = swap(n.text); if (n.note) n.note = swap(n.note); });
+    return count;
+  }
+
+  /** Sort a topic's subtopics by due date (dated first, earliest first), then A→Z. Returns true if the order changed. */
+  function sortByDue(doc, id) {
+    const n = getNode(doc, id);
+    if (!n || n.children.length < 2) return false;
+    const before = n.children.map((c) => c.id).join(',');
+    n.children.sort((a, b) => String(a.due || '9999-99-99').localeCompare(String(b.due || '9999-99-99'))
+      || a.text.localeCompare(b.text, undefined, { numeric: true, sensitivity: 'base' }));
+    return n.children.map((c) => c.id).join(',') !== before;
   }
 
   function search(doc, query) {
@@ -332,13 +395,14 @@
   }
 
   function stats(doc) {
-    let nodes = 0, words = 0, done = 0, tasks = 0;
+    let nodes = 0, words = 0, done = 0, tasks = 0, due = 0, overdue = 0;
     walkDoc(doc, (n) => {
       nodes++;
       words += (n.text.match(/\S+/g) || []).length;
       if (n.task) { tasks++; if (n.task === 'done') done++; }
+      if (n.due) { due++; if (isOverdue(n)) overdue++; }
     });
-    return { nodes, words, tasks, done };
+    return { nodes, words, tasks, done, due, overdue };
   }
 
   function toggleMarker(node, marker) {
@@ -381,6 +445,7 @@
   ML.model = {
     uid, createNode, createDoc, normalizeDoc, clone, trees, walk, walkDoc, find, getNode, pathTo, isAncestor,
     addChild, addSibling, addParent, remove, move, detach, reorder, indent, outdent, duplicate, insertSubtree, cleanNode,
-    cloneWithNewIds, expandTo, setCollapsed, collapseToLevel, search, stats, toggleMarker, addRelation, History,
+    cloneWithNewIds, expandTo, setCollapsed, collapseToLevel, search, replaceText, sortByDue, stats, toggleMarker, addRelation, History,
+    isDateStr, todayStr, formatDue, isOverdue,
   };
 })(typeof module !== 'undefined' && module.exports ? (global.ML = global.ML || {}) : (window.ML = window.ML || {}));

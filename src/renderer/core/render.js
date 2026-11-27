@@ -163,11 +163,17 @@
       s += markerSVG(ic.kind, ic.val, ix, iconY, b.iconSize, st.color);
       ix += b.iconSize + b.iconGap;
     }
-    // tags
+    // tags + due-date chip
     if (b.tags.length) {
       let gx = b.tagsX;
       for (const tg of b.tags) {
-        s += `<g class="tag"><rect x="${n(gx)}" y="${n(b.tagsY)}" width="${tg.w}" height="18" rx="9" fill="${st.line}" fill-opacity="0.18"/><text x="${n(gx + tg.w / 2)}" y="${n(b.tagsY + 9.5)}" text-anchor="middle" dominant-baseline="central" font-size="11" font-weight="600" font-family="${esc(st.font)}" fill="${st.color}" fill-opacity="0.85">${esc(tg.text)}</text></g>`;
+        if (tg.kind === 'due') {
+          const fill = tg.overdue ? '#e03131' : st.line;
+          const txt = tg.overdue ? '#ffffff' : st.color;
+          s += `<g class="tag due${tg.overdue ? ' overdue' : ''}"><title>Due ${esc(t.node.due)}${tg.overdue ? ' — overdue' : ''}</title><rect x="${n(gx)}" y="${n(b.tagsY)}" width="${tg.w}" height="18" rx="9" fill="${fill}" fill-opacity="${tg.overdue ? 0.92 : 0.18}"/><text x="${n(gx + tg.w / 2)}" y="${n(b.tagsY + 9.5)}" text-anchor="middle" dominant-baseline="central" font-size="11" font-weight="600" font-family="${esc(st.font)}" fill="${txt}" fill-opacity="${tg.overdue ? 1 : 0.85}">${esc(tg.text)}</text></g>`;
+        } else {
+          s += `<g class="tag"><rect x="${n(gx)}" y="${n(b.tagsY)}" width="${tg.w}" height="18" rx="9" fill="${st.line}" fill-opacity="0.18"/><text x="${n(gx + tg.w / 2)}" y="${n(b.tagsY + 9.5)}" text-anchor="middle" dominant-baseline="central" font-size="11" font-weight="600" font-family="${esc(st.font)}" fill="${st.color}" fill-opacity="0.85">${esc(tg.text)}</text></g>`;
+        }
         gx += tg.w + 4;
       }
     }
