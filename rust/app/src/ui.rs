@@ -659,7 +659,8 @@ fn seg<T: PartialEq + Clone>(ui: &mut Ui, cur: &T, opts: &[(T, &str)]) -> Option
 fn slider(app: &mut App, ui: &mut Ui, label: &str, mut v: f64, range: std::ops::RangeInclusive<f64>, step: f64, set: impl Fn(&mut App, f64)) {
     ui.horizontal(|ui| {
         ui.add_sized(vec2(78.0, 18.0), egui::Label::new(label));
-        let r = ui.add(egui::Slider::new(&mut v, range).step_by(step));
+        let s = egui::Slider::new(&mut v, range).step_by(step);
+        let r = ui.add(if step >= 1.0 { s.fixed_decimals(0) } else { s });
         if r.changed() {
             set(app, v);
             app.refresh_geo();

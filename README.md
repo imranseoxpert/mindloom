@@ -2,7 +2,9 @@
 
 A fast, friendly mind mapping app for **macOS** and **Windows**. Press <kbd>Tab</kbd> for a subtopic, <kbd>Enter</kbd> for a topic, and start typing.
 
-![Mindloom main window](docs/screenshot-main.png)
+Version 2 is written in Rust: a single native app of about 30 MB that starts instantly and stays smooth on maps with thousands of topics.
+
+![Mindloom main window](rust/docs/screenshots/01-welcome.png)
 
 ## Download
 
@@ -10,13 +12,16 @@ Get the latest installers from the [Releases page](https://github.com/imranseoxp
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon and Intel) | `Mindloom-1.1.0-mac-universal.dmg` |
-| Windows 10/11 (64-bit) | `Mindloom-1.1.0-win-x64.exe` |
+| macOS 11 or later (Apple Silicon and Intel) | `Mindloom-2.0.0-mac-universal.dmg` |
+| Windows 10/11 (64-bit), installer | `Mindloom-2.0.0-win-x64.exe` |
+| Windows 10/11 (64-bit), no install | `Mindloom-2.0.0-win-x64-portable.zip` |
 
 The installers are not signed with a paid Apple or Microsoft developer certificate, so each system shows a warning the first time:
 
 - **macOS:** open the `.dmg`, drag Mindloom to Applications, then open it. If macOS blocks it, go to **System Settings → Privacy & Security** and click **Open Anyway**. Or run `xattr -cr /Applications/Mindloom.app` once in Terminal.
 - **Windows:** when SmartScreen appears, click **More info → Run anyway**.
+
+Maps made with Mindloom 1.x open unchanged in 2.0, and the other way round.
 
 ## Features
 
@@ -80,7 +85,7 @@ Generate a map from a topic, turn pasted notes into a map, or expand the selecte
 | --- | --- | --- |
 | Anthropic (Claude), OpenAI, Google Gemini, Mistral, Groq, DeepSeek, xAI (Grok), OpenRouter, Together AI | Ollama, LM Studio (no key needed) | Any OpenAI-compatible API address |
 
-Keys are stored encrypted with your operating system's keychain and each key is only sent to its own provider. "Load models" lists the models your key can use. The rest of the app works fully offline.
+Keys are stored in your operating system's keychain (macOS Keychain, Windows Credential Manager) and each key is only sent to its own provider. "Load models" lists the models your key can use. The rest of the app works fully offline.
 
 ## Keyboard shortcuts
 
@@ -107,44 +112,44 @@ On Windows use <kbd>Ctrl</kbd> where the table says <kbd>⌘</kbd>. Press <kbd>F
 
 ## Build from source
 
-Requires [Node.js](https://nodejs.org/) 20 or newer.
+Requires the current stable [Rust](https://rustup.rs/).
 
 ```bash
 git clone https://github.com/imranseoxpert/mindloom.git
-cd mindloom
-npm install
-npm start
+cd mindloom/rust
+cargo run --release -p mindloom
 ```
 
-Create installers (output goes to `dist/`):
+Create installers (output goes to `rust/dist/`):
 
 ```bash
-npm run dist:mac
-npm run dist:win
+rust/packaging/macos/build.sh
 ```
+
+The Windows installer is built with [Inno Setup](https://jrsoftware.org/isinfo.php) from `rust/packaging/windows/mindloom.iss`; the [GitHub Actions workflow](.github/workflows/rust-release.yml) builds both on every `v2*` tag.
 
 ## Tests
 
 ```bash
-npm test
-npm run test:app
+cd rust
+cargo test --release
+MINDLOOM_SELFTEST=/tmp/mindloom-selftest cargo run --release -p mindloom
 ```
 
-- `npm test` runs the unit tests for the document model, the nine layout algorithms, the SVG renderer, theme contrast, and every import/export format.
-- `npm run test:app` launches the real app and drives it with mouse and keyboard events: creating, renaming, dragging (free placement, snapping, re-parenting, reordering, side switching, multi-select), the real clipboard and menus, every structure × theme combination, dialogs, presentation mode, PNG/SVG/PDF export, saving and reopening files, and the AI assistant against a local mock of both API styles.
+- `cargo test` replays 15,197 recordings of the 1.x engine (layouts of every structure and theme, the drawn map and SVG export, styles, text wrapping, every import and export format, and the editing operations) and checks the Rust engine gives the same result: positions within a millionth of a pixel, files byte for byte.
+- `MINDLOOM_SELFTEST=<folder>` starts the real app, drives it with mouse and keyboard events (typing, dragging with free placement and re-parenting, undo, marquee selection, floating topics, every structure, dialogs, search, presentation, exports, saving and reopening, a 1,453-topic map), writes screenshots and `report.txt` to the folder, and quits.
 
 ## Project layout
 
 ```
-src/main/            Electron main process: windows, menus, file dialogs, PDF, autosave
-src/main/ai.js       AI assistant: providers, encrypted key storage, requests
-src/renderer/core/   Pure logic, no DOM: model, layout, SVG renderer, import/export, themes, templates
-src/renderer/ui/     The interface: canvas interaction, panels, dialogs
-test/                Unit tests and the in-app end-to-end test
-examples/            Sample .mindloom files
+rust/core/           The engine, no interface: document model, nine layouts, SVG renderer, import/export, themes, templates
+rust/app/            The app (egui): canvas, interaction, panels, dialogs, files, autosave, exports, AI assistant
+rust/packaging/      macOS bundle and .dmg script, Windows installer script and icon
+rust/cases/          Recordings of the 1.x engine that the Rust engine is tested against (rust/record.js makes them)
+src/                 Mindloom 1.x (Electron). Kept as the reference, and used by the Notes app's mind maps
 ```
 
-The map is drawn as plain SVG by one renderer that is shared by the screen, the PNG/SVG/PDF exports and the theme previews, so what you export is what you see.
+The map is drawn by the same layout engine for the screen, the PNG/SVG/PDF exports and the theme previews, so what you export is what you see.
 
 ## Licence
 
