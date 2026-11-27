@@ -136,7 +136,7 @@ pub fn autosave_recover(own: &str) -> Option<Autosave> {
 
 // ---------- opening and saving ----------
 
-pub const OPEN_EXTS: &[&str] = &["mindloom", "xmind", "mm", "opml", "md", "markdown", "txt", "json"];
+pub const OPEN_EXTS: &[&str] = &["mindloom", "xmind", "mm", "opml", "md", "markdown", "txt", "json", "csv"];
 
 /// Read any supported map file.
 pub fn read_map(path: &Path) -> Result<Doc, String> {
@@ -267,7 +267,7 @@ mod tests {
         let doc = mindloom_core::templates::build(themes::TEMPLATES[1].id);
         let theme = themes::get_theme(&doc.settings.theme);
         let m = |t: &str, f: &mindloom_core::layout::FontSpec| mindloom_core::layout::test_measure(t, f);
-        let ctx = mindloom_core::layout::Ctx { theme, settings: &doc.settings, measure: &m, focus_id: None, ignore_offset_id: None };
+        let ctx = mindloom_core::layout::Ctx { theme, settings: &doc.settings, measure: &m, focus_id: None, ignore_offset_id: None, today: "2026-11-15" };
         let l = mindloom_core::layout::layout(&doc, &ctx);
         let e = export_svg(&l, &doc, theme, &doc.settings, false, None);
         assert!(e.svg.contains("Inter, "));

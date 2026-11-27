@@ -1,4 +1,4 @@
-name: Release
+name: Release (1.x Electron)
 
 # Publishing a GitHub Release builds the macOS and Windows installers from that
 # release's tag and uploads them to the release. It can also be run manually
@@ -19,6 +19,8 @@ permissions:
 
 jobs:
   build:
+    # Mindloom 1.x (Electron) only: 2.x releases are built by rust-release.yml
+    if: startsWith(github.event.release.tag_name || inputs.tag, 'v1.')
     strategy:
       fail-fast: false
       matrix:

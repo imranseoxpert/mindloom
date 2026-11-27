@@ -32,9 +32,16 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let editing = app.editing.as_ref().map(|e| e.id.clone());
     {
         let view = app.view();
-        let App { doc, fonts, images, measure, ctx, focus_id, sel, matches, sel_rel, hover, .. } = app;
+        let App { doc, fonts, images, measure, ctx, focus_id, sel, matches, sel_rel, hover, today, .. } = app;
         let m = crate::state::measure_fn(ctx, fonts, measure);
-        let lctx = mindloom_core::layout::Ctx { theme, settings: &doc.settings, measure: &m, focus_id: focus_id.as_deref(), ignore_offset_id: None };
+        let lctx = mindloom_core::layout::Ctx {
+            theme,
+            settings: &doc.settings,
+            measure: &m,
+            focus_id: focus_id.as_deref(),
+            ignore_offset_id: None,
+            today: today.as_str(),
+        };
         let l = mindloom_core::layout::layout(doc, &lctx);
         let mut c = Canvas { painter: &painter, view, fonts, images };
         let o = PaintOpts {
@@ -484,6 +491,13 @@ fn overlays(app: &mut App, ui: &mut Ui, rect: Rect) {
                     app.close_search();
                 }
             });
+            pill(ui, |ui| {
+                let r = ui.add(egui::TextEdit::singleline(&mut app.replace_q).hint_text("Replace with…").desired_width(170.0));
+                let enter = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                if ui.button("Replace all").on_hover_text("Replace in all topic text and notes").clicked() || enter {
+                    app.replace_all();
+                }
+            });
         });
     }
     // presentation bar
@@ -598,7 +612,17 @@ fn context_menu(app: &mut App, resp: &egui::Response) {
                 if item(ui, "Sort subtopics A→Z", "", n.children.len() >= 2) {
                     app.sort_children();
                 }
+                if item(ui, "Sort subtopics by due date", "", n.children.len() >= 2) {
+                    app.sort_by_due();
+                }
                 ui.separator();
+                let due_label = match &n.due {
+                    Some(d) => format!("Due date: {d}…"),
+                    None => "Set due date…".to_string(),
+                };
+                if item(ui, &due_label, "", true) {
+                    crate::ui::due_dialog(app);
+                }
                 if item(ui, "Relationship…", &k("Mod+Shift+R"), true) {
                     app.relation();
                 }

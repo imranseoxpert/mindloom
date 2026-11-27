@@ -29,6 +29,8 @@ pub struct Ctx<'a> {
     pub measure: Measure<'a>,
     pub focus_id: Option<&'a str>,
     pub ignore_offset_id: Option<&'a str>,
+    /// Today as `YYYY-MM-DD`, for due dates and "overdue".
+    pub today: &'a str,
 }
 
 // ---------- text wrapping ----------
@@ -109,6 +111,9 @@ pub enum Icon {
 pub struct Tag {
     pub text: String,
     pub w: f64,
+    /// The due-date chip (first in the row), and whether it is overdue.
+    pub due: bool,
+    pub overdue: bool,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Row {
@@ -147,14 +152,23 @@ pub fn font_of(st: &Style) -> FontSpec {
     FontSpec { size: st.font_size, weight: if st.bold { 700 } else { 400 }, italic: st.italic, family: st.font }
 }
 
-pub fn measure_node(node: &Node, depth: usize, branch: i64, ctx: &Ctx, floating: bool) -> NodeBox {
+/// `num` is the automatic outline number ("1.2"), or empty.
+pub fn measure_node(node: &Node, depth: usize, branch: i64, ctx: &Ctx, floating: bool, num: &str) -> NodeBox {
     let st = themes::resolve_style(node, depth, branch, ctx.theme, ctx.settings, floating);
     let fs = st.font_size;
     let font = font_of(&st);
     let lh = round(fs * 1.32);
     let style_w = node.style.as_ref().and_then(|s| s.width).filter(|w| *w != 0.0);
     let max_w = style_w.unwrap_or(if depth == 0 { ctx.settings.max_width + 80.0 } else { ctx.settings.max_width });
-    let text = if node.text.is_empty() { " " } else { node.text.as_str() };
+    let raw = if node.text.is_empty() { " " } else { node.text.as_str() };
+    // automatic numbering prefixes the first line only, like an outline (1, 1.1, 1.1.1…)
+    let numbered;
+    let text = if !num.is_empty() && !node.text.is_empty() {
+        numbered = format!("{num}  {raw}");
+        numbered.as_str()
+    } else {
+        raw
+    };
     let lines = wrap_text(text, &font, max_w, ctx.measure);
     let mut text_w = 0f64;
     for l in &lines {
@@ -185,7 +199,14 @@ pub fn measure_node(node: &Node, depth: usize, branch: i64, ctx: &Ctx, floating:
     let row_h = text_h.max(if !lead.is_empty() || !trail.is_empty() { icon_size } else { 0.0 });
 
     let tag_font = FontSpec { size: 11.0, weight: 600, italic: false, family: st.font };
-    let tags: Vec<Tag> = node.tags.iter().flatten().map(|t| Tag { text: t.clone(), w: (ctx.measure)(t, &tag_font).ceil() + 14.0 }).collect();
+    let mut tags: Vec<Tag> =
+        node.tags.iter().flatten().map(|t| Tag { text: t.clone(), w: (ctx.measure)(t, &tag_font).ceil() + 14.0, due: false, overdue: false }).collect();
+    // a due date rides in the same chip row as the labels, first in line, red when overdue
+    if let Some(d) = node.due.as_deref().filter(|d| model::is_date_str(d)) {
+        let label = format!("📅 {}", model::format_due(d, ctx.today));
+        let w = (ctx.measure)(&label, &tag_font).ceil() + 14.0;
+        tags.insert(0, Tag { text: label, w, due: true, overdue: model::is_overdue(node, ctx.today) });
+    }
     let tags_w = tags.iter().map(|t| t.w + 4.0).sum::<f64>() - if tags.is_empty() { 0.0 } else { 4.0 };
     let tags_h = if tags.is_empty() { 0.0 } else { 18.0 };
 
@@ -418,8 +439,8 @@ struct Builder<'a, 'c> {
 }
 
 impl<'a> Builder<'a, '_> {
-    fn build(&mut self, node: &'a Node, depth: usize, branch: i64, floating: bool, parent: Option<usize>) -> usize {
-        let b = measure_node(node, depth, branch, self.ctx, floating);
+    fn build(&mut self, node: &'a Node, depth: usize, branch: i64, floating: bool, parent: Option<usize>, num: &str) -> usize {
+        let b = measure_node(node, depth, branch, self.ctx, floating, num);
         let idx = self.items.len();
         self.items.push(Item {
             id: &node.id,
@@ -456,7 +477,16 @@ impl<'a> Builder<'a, '_> {
                 } else {
                     branch
                 };
-                let ci = self.build(c, depth + 1, cb, floating, Some(idx));
+                let cnum = if self.ctx.settings.numbering == "on" {
+                    if num.is_empty() {
+                        (i + 1).to_string()
+                    } else {
+                        format!("{num}.{}", i + 1)
+                    }
+                } else {
+                    String::new()
+                };
+                let ci = self.build(c, depth + 1, cb, floating, Some(idx), &cnum);
                 self.items[idx].children.push(ci);
             }
         }
@@ -837,7 +867,7 @@ pub fn layout<'a>(doc: &'a Doc, ctx: &Ctx) -> Layout<'a> {
     let main_root = ctx.focus_id.and_then(|id| model::get(doc, id)).unwrap_or(&doc.root);
     let mut extras = vec![];
     let mut b = Builder { items: vec![], ctx };
-    let root = b.build(main_root, 0, -1, false, None);
+    let root = b.build(main_root, 0, -1, false, None, "");
     let lay = s.layout.as_str();
     match lay {
         "mindmap" => {
@@ -942,7 +972,7 @@ pub fn layout<'a>(doc: &'a Doc, ctx: &Ctx) -> Layout<'a> {
     if ctx.focus_id.is_none() {
         let offset = if doc.root.children.is_empty() { 1 } else { doc.root.children.len() } as i64;
         for (i, f) in doc.floating.iter().enumerate() {
-            let ft = b.build(f, 0, offset + i as i64, true, None);
+            let ft = b.build(f, 0, offset + i as i64, true, None, "");
             b.size_h(ft, s);
             let h = b.items[ft].h;
             b.place_h(ft, f.x.unwrap_or(0.0), f.y.unwrap_or(0.0) + h / 2.0, 1.0, s);

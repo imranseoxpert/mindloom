@@ -7,6 +7,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const zlib = require('node:zlib');
 
+// a fixed "today" (2026-11-15, local time) so due dates and "overdue" are recorded deterministically
+const RealDate = Date;
+const FIXED_NOW = new RealDate(2026, 10, 15, 12, 0, 0).getTime();
+global.Date = class extends RealDate {
+  constructor(...a) { super(...(a.length ? a : [FIXED_NOW])); }
+  static now() { return FIXED_NOW; }
+};
+
 for (const f of ['themes', 'model', 'layout', 'render', 'io', 'templates']) require(`../src/renderer/core/${f}.js`);
 const { model: M, layout: Lay, render: R, io: IO, themes: T, templates: TPL } = global.ML;
 const OUT = path.join(__dirname, 'cases');
@@ -51,6 +59,7 @@ function genNode(depth, ctx) {
   }
   if (chance(0.2)) n.icons = [...new Set([pick(T.MARKER_GROUPS).items[0], pick(pick(T.MARKER_GROUPS).items)])];
   if (chance(0.15)) n.task = pick(['todo', 'done']);
+  if (chance(0.18)) n.due = pick(['2026-11-10', '2026-11-15', '2026-12-01', '2027-03-04', '2025-01-31', 'bad-date', '2026-02-30', '0099-01-01']);
   if (chance(0.15)) n.tags = [pick(['urgent', 'Q3', 'idée', 'a&b'])].concat(chance(0.4) ? ['two words'] : []);
   if (chance(0.12)) n.note = pick(['A note', 'Line 1\nLine 2', 'x'.repeat(320), '<b>bold</b> & "q"']);
   if (chance(0.1)) n.link = 'https://example.com/?a=1&b=2';
@@ -67,7 +76,7 @@ function genSettings() {
   return {
     theme: pick(T.THEMES).id, layout: pick(T.LAYOUTS).id, lineStyle: pick(T.LINE_STYLES).id, pattern: pick(T.PATTERNS).id, font: pick(T.FONTS).id,
     shapes: { root: pick(T.SHAPES).id, main: pick(T.SHAPES).id, sub: pick(T.SHAPES).id },
-    rainbow: pick([null, true, false]), hGap: pick([30, 56, 90]), vGap: pick([6, 14, 24]), lineWidth: pick([1, 2, 3.5]), maxWidth: pick([160, 260]), fontScale: pick([0.8, 1, 1.25]),
+    rainbow: pick([null, true, false]), numbering: pick(['off', 'on', 'off', 'weird']), hGap: pick([30, 56, 90]), vGap: pick([6, 14, 24]), lineWidth: pick([1, 2, 3.5]), maxWidth: pick([160, 260]), fontScale: pick([0.8, 1, 1.25]),
   };
 }
 function genDoc() {
@@ -171,9 +180,9 @@ write('style', styleCases);
 const ioCases = [];
 for (const raw of docs.slice(0, 200)) {
   const doc = M.normalizeDoc(JSON.parse(JSON.stringify(raw)));
-  const c = { doc: JSON.parse(JSON.stringify(doc)), md: IO.toMarkdown(doc), opml: IO.toOPML(doc), txt: IO.toText(doc), mm: IO.toFreeMind(doc) };
+  const c = { doc: JSON.parse(JSON.stringify(doc)), md: IO.toMarkdown(doc), opml: IO.toOPML(doc), txt: IO.toText(doc), mm: IO.toFreeMind(doc), csv: IO.toCSV(doc), html: IO.toHTML(doc, '<svg>map</svg>') };
   c.back = {};
-  for (const [k, fn] of [['md', IO.fromMarkdown], ['opml', IO.fromOPML], ['txt', IO.fromText], ['mm', IO.fromFreeMind]]) {
+  for (const [k, fn] of [['md', IO.fromMarkdown], ['opml', IO.fromOPML], ['txt', IO.fromText], ['mm', IO.fromFreeMind], ['csv', IO.fromCSV]]) {
     try { c.back[k] = canon(fn(c[k])); } catch (e) { c.back[k] = { error: e.message }; }
   }
   ioCases.push(c);
@@ -187,6 +196,11 @@ const HAND = [
   ['x.mm', '<map version="1.0.1"><node TEXT="Root"><node TEXT="L" POSITION="left" FOLDED="true" LINK="https://x.y"><node TEXT="g"/></node><node><richcontent TYPE="NODE"><html><body><p>Rich</p></body></html></richcontent><richcontent TYPE="NOTE"><html><body><p>Note text</p></body></html></richcontent></node><node TEXT="free"><hook NAME="FreeNode"/></node></node></map>'],
   ['x.mindloom', JSON.stringify({ root: { text: 'R', children: [{ text: 'C' }] } })], ['x.json', '{"doc":{"root":{"text":"Wrapped","children":[]}}}'], ['x.json', '{"nope":1}'],
   ['x.mm', '<map><nothing/></map>'], ['x.md', '# A\n# B\n## B1'],
+  ['x.md', '# Plan (due: 2026-12-01)\n## [x] Ship [docs](https://d.e) (due: 2026-11-20)\n- bad (due: 2026-02-30)'],
+  ['x.csv', 'Name,Status,Deadline,Tags,URL,Description\n"Project, big",,2026-12-01,a;b|c,https://x.y,"line ""one"""\nStep,done,,,,'],
+  ['x.csv', '﻿Topic,Depth,Task\r\nRoot,0,\r\nA,1,To do\r\nA1,2,Done\r\nB,1,x\r\nFloat,0,\r\nF1,1,'],
+  ['x.csv', 'Topic,Level\nOnly,abc\nSecond,\nThird,-2\nFourth,2.5'],
+  ['x.csv', 'Foo,Bar\n1,2'], ['x.csv', 'Topic\n'], ['x.csv', 'Topic\n,\n  ,'], ['x.csv', 'title\n"multi\nline" topic'],
 ];
 const handCases = HAND.map(([name, text]) => { try { return { name, text, out: canon(IO.importText(name, text)) }; } catch (e) { return { name, text, error: e.message }; } });
 write('io', ioCases);
@@ -195,14 +209,14 @@ write('import', handCases);
 // ---------- 5. model operations ----------
 const opCases = [];
 const pathOf = (doc, id) => { const p = []; const rec = (n, acc) => { if (n.id === id) { p.push(...acc); return true; } return n.children.some((c, i) => rec(c, acc.concat(i))); }; if (rec(doc.root, [])) return ['r'].concat(p); for (let k = 0; k < doc.floating.length; k++) { p.length = 0; if (rec(doc.floating[k], [])) return ['f' + k].concat(p); } return null; };
-const OPS = ['addChild', 'addSibling', 'addSiblingBefore', 'addParent', 'remove', 'move', 'detach', 'reorderUp', 'reorderDown', 'indent', 'outdent', 'duplicate', 'insertSubtree', 'collapse', 'collapseToLevel', 'marker', 'relation', 'search', 'stats'];
+const OPS = ['replaceText', 'sortByDue', 'addChild', 'addSibling', 'addSiblingBefore', 'addParent', 'remove', 'move', 'detach', 'reorderUp', 'reorderDown', 'indent', 'outdent', 'duplicate', 'insertSubtree', 'collapse', 'collapseToLevel', 'marker', 'relation', 'search', 'stats'];
 for (let i = 0; i < 400; i++) {
   const doc = M.normalizeDoc(genDoc());
   const ids = []; M.walkDoc(doc, (n) => ids.push(n.id));
   const op = OPS[i % OPS.length];
   const a = pick(ids), b = pick(ids);
   const before = canon(JSON.parse(JSON.stringify(doc)));
-  const args = { a: pathOf(doc, a), b: pathOf(doc, b), n: int(0, 3), text: pick(TEXTS), marker: pick(pick(T.MARKER_GROUPS).items), q: pick(['idea', 'É', 'plan', 'zz', '']), x: int(-50, 50), y: int(-50, 50), index: pick([null, 0, 1, 99]), flag: pick([null, true, false]) };
+  const args = { a: pathOf(doc, a), b: pathOf(doc, b), n: int(0, 3), text: pick(TEXTS), marker: pick(pick(T.MARKER_GROUPS).items), q: pick(['idea', 'É', 'plan', 'zz', '']), x: int(-50, 50), y: int(-50, 50), index: pick([null, 0, 1, 99]), flag: pick([null, true, false]), find: pick(['e', 'Idea', 'É', 'plan', 'x', '', 'a b', 'İ', 'ß']), rep: pick(['', 'E', '→', 'longer text']) };
   let result;
   try {
     switch (op) {
@@ -225,6 +239,8 @@ for (let i = 0; i < 400; i++) {
       case 'relation': result = !!M.addRelation(doc, a, b, args.text); break;
       case 'search': result = M.search(doc, args.q).map((id) => pathOf(doc, id)); break;
       case 'stats': result = M.stats(doc); break;
+      case 'replaceText': result = M.replaceText(doc, args.find, args.rep, { caseSensitive: args.flag === true }); break;
+      case 'sortByDue': result = M.sortByDue(doc, a); break;
       default: throw new Error(op);
     }
   } catch (e) { result = { error: e.message }; }
@@ -238,6 +254,8 @@ const NORMALIZE = [
 ];
 const normCases = NORMALIZE.map((d) => { try { return { doc: d, out: canon(M.normalizeDoc(JSON.parse(JSON.stringify(d)))) }; } catch (e) { return { doc: d, error: e.message }; } });
 write('ops', opCases);
+const DATES = ['2026-11-15', '2026-11-14', '2026-11-16', '2027-01-01', '2025-12-31', '2026-02-29', '2028-02-29', '2026-13-01', '2026-00-10', '2026-04-31', '0099-01-01', '0100-03-01', '9999-12-31', '2026-1-01', ' 2026-11-15', '2026-11-15 ', '٢٠٢٦-١١-١٥', '', 'x'];
+write('dates', DATES.map((d) => ({ d, valid: M.isDateStr(d), fmt: M.formatDue(d), overdueTodo: M.isOverdue({ due: d, task: 'todo' }), overdueDone: M.isOverdue({ due: d, task: 'done' }), today: M.todayStr() })));
 write('normalize', normCases);
 
 // ---------- 6. generated Rust data: themes and built templates, straight from the JS ----------

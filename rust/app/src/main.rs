@@ -74,6 +74,12 @@ impl eframe::App for Mindloom {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let app = &mut self.app;
         app.now = ctx.input(|i| i.time);
+        // a new day can make due dates overdue
+        let today = state::today();
+        if today != app.today {
+            app.today = today;
+            app.refresh_geo();
+        }
         if ctx.input(|i| i.viewport().close_requested()) && !app.quit_ok {
             if app.editing.is_some() {
                 app.commit_edit();

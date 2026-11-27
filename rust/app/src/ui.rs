@@ -188,8 +188,11 @@ fn menus(app: &mut App, ui: &mut Ui) {
             app.paste_style();
         }
         ui.separator();
-        if mi(ui, "Find…", "Mod+F") {
+        if mi(ui, "Find & replace…", "Mod+F") {
             open_search(app);
+        }
+        if mi(ui, "Set due date…", "") {
+            due_dialog(app);
         }
     });
     ui.menu_button("Insert", |ui| {
@@ -302,7 +305,14 @@ fn export_items(app: &mut App, ui: &mut Ui) {
         }
     }
     ui.separator();
-    for (k, l) in [("md", "Markdown (.md)"), ("opml", "OPML outline"), ("txt", "Plain text outline"), ("mm", "FreeMind / Freeplane (.mm)")] {
+    for (k, l) in [
+        ("html", "Web page (.html)"),
+        ("md", "Markdown (.md)"),
+        ("opml", "OPML outline"),
+        ("txt", "Plain text outline"),
+        ("mm", "FreeMind / Freeplane (.mm)"),
+        ("csv", "Spreadsheet (.csv)"),
+    ] {
         if mi(ui, l, "") {
             app.export(k);
         }
@@ -333,6 +343,12 @@ fn show_note(app: &mut App) {
 fn link_dialog(app: &mut App) {
     match app.primary().and_then(|p| model::get(&app.doc, &p).cloned()) {
         Some(n) => app.dialog = Some(Dialog::Link(n.link.unwrap_or_default())),
+        None => app.toast("Select a topic first."),
+    }
+}
+pub fn due_dialog(app: &mut App) {
+    match app.primary().and_then(|p| model::get(&app.doc, &p).cloned()) {
+        Some(n) => app.dialog = Some(Dialog::Due(n.due.unwrap_or_default())),
         None => app.toast("Select a topic first."),
     }
 }
@@ -876,6 +892,27 @@ fn topic_tab(app: &mut App, ui: &mut Ui) {
         app.for_selected(|x| x.task = if v.is_empty() { None } else { Some(v.to_string()) });
         app.commit(false);
     }
+    h4(ui, "Due date");
+    ui.horizontal(|ui| {
+        let parsed = n.due.as_deref().and_then(|d| d.parse::<jiff::civil::Date>().ok());
+        let mut date = parsed.or_else(|| app.today.parse::<jiff::civil::Date>().ok()).unwrap_or_default();
+        let r = ui.add(egui_extras::DatePickerButton::new(&mut date).id_salt("due-picker").calendar_week(false));
+        if r.changed() {
+            app.set_due(Some(date.to_string()));
+        }
+        if n.due.is_some() {
+            if ui.button("Clear").clicked() {
+                app.set_due(None);
+            }
+        } else {
+            ui.label(RichText::new("not set").weak());
+        }
+    });
+    if model::is_overdue(&n, &app.today) {
+        ui.label(RichText::new("⚠ Overdue — the date chip on the map turns red until the task is done.").color(Color32::from_rgb(0xe0, 0x31, 0x31)));
+    } else {
+        ui.label(RichText::new("Shown as a 📅 chip on the topic.").weak());
+    }
     h4(ui, "Labels");
     text_field(app, ui, "tags", n.tags.clone().unwrap_or_default().join(", "), "Comma separated, e.g. urgent, Q3", |n, v| {
         let tags: Vec<String> = v.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect();
@@ -992,9 +1029,9 @@ pub fn thumb(app: &mut App, ui: &Ui, r: egui::Rect, doc: &Doc, pad: f32) {
     let theme = themes::get_theme(&doc.settings.theme);
     let painter = ui.painter_at(r);
     painter.rect_filled(r, CornerRadius::same(6), canvas::color(theme.bg));
-    let App { fonts, images, measure, ctx, .. } = app;
+    let App { fonts, images, measure, ctx, today, .. } = app;
     let m = crate::state::measure_fn(ctx, fonts, measure);
-    let lctx = mindloom_core::layout::Ctx { theme, settings: &doc.settings, measure: &m, focus_id: None, ignore_offset_id: None };
+    let lctx = mindloom_core::layout::Ctx { theme, settings: &doc.settings, measure: &m, focus_id: None, ignore_offset_id: None, today: today.as_str() };
     let l = mindloom_core::layout::layout(doc, &lctx);
     let b = l.bounds;
     let z = ((r.width() - pad * 2.0) / b.w.max(1.0) as f32).min((r.height() - pad * 2.0) / b.h.max(1.0) as f32);
@@ -1162,6 +1199,12 @@ fn map_tab(app: &mut App, ui: &mut Ui) {
         ui.add_sized(vec2(78.0, 18.0), egui::Label::new("Rainbow"));
         if let Some(v) = seg(ui, &s.rainbow, &[(None, "Theme"), (Some(true), "On"), (Some(false), "Off")]) {
             set_settings(app, |s| s.rainbow = v);
+        }
+    });
+    ui.horizontal(|ui| {
+        ui.add_sized(vec2(78.0, 18.0), egui::Label::new("Numbering"));
+        if let Some(v) = seg(ui, &s.numbering.as_str(), &[("off", "Off"), ("on", "1 · 1.1 · 1.1.1")]) {
+            set_settings(app, |s| s.numbering = v.into());
         }
     });
     h4(ui, "Topic shapes");
@@ -1723,6 +1766,8 @@ fn dialogs(app: &mut App, ctx: &egui::Context) {
                     ("Hyperlink", kb("Mod+K")),
                     ("Note", kb("Mod+Shift+M")),
                     ("Relationship", kb("Mod+Shift+R")),
+                    ("Due date", "Right-click → Set due date".into()),
+                    ("Find & replace", kb("Mod+F") + " → Replace all"),
                     ("Boundary", kb("Mod+Shift+B")),
                     ("Focus on branch", kb("Mod+Shift+F")),
                     ("Find", kb("Mod+F")),
@@ -1846,6 +1891,38 @@ fn dialogs(app: &mut App, ctx: &egui::Context) {
                 }
             }
             Dialog::Link(v)
+        }
+        Dialog::Due(mut v) => {
+            let mut done: Option<bool> = None;
+            let r = egui::Modal::new(Id::new("due")).show(ctx, |ui| {
+                ui.set_width(420.0);
+                ui.heading("Due date");
+                ui.label(RichText::new("Due date for this topic, as YYYY-MM-DD (leave empty to remove):").weak());
+                let te = ui.add(egui::TextEdit::singleline(&mut v).hint_text("2026-12-01").desired_width(f32::INFINITY));
+                te.request_focus();
+                if ui.input(|i| i.key_pressed(Key::Enter)) {
+                    done = Some(true);
+                }
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        done = Some(false);
+                    }
+                    if ui.button("OK").clicked() {
+                        done = Some(true);
+                    }
+                });
+            });
+            if r.should_close() {
+                done = Some(false);
+            }
+            if let Some(ok) = done {
+                keep = false;
+                if ok {
+                    let val = mindloom_core::js::trim(&v).to_string();
+                    app.set_due(if val.is_empty() { None } else { Some(val) });
+                }
+            }
+            Dialog::Due(v)
         }
         Dialog::RelLabel(mut v) => {
             let mut done: Option<bool> = None;

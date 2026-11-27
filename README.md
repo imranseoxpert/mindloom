@@ -138,7 +138,7 @@ cargo test --release
 MINDLOOM_SELFTEST=/tmp/mindloom-selftest cargo run --release -p mindloom
 ```
 
-- `cargo test` replays 15,197 recordings of the 1.x engine (layouts of every structure and theme, the drawn map and SVG export, styles, text wrapping, every import and export format, and the editing operations) and checks the Rust engine gives the same result: positions within a millionth of a pixel, files byte for byte.
+- `cargo test` replays 15,224 recordings of the 1.x engine (layouts of every structure and theme, the drawn map and SVG export, styles, text wrapping, every import and export format, and the editing operations) and checks the Rust engine gives the same result: positions within a millionth of a pixel, files byte for byte.
 - `MINDLOOM_SELFTEST=<folder>` starts the real app, drives it with mouse and keyboard events (typing, dragging with free placement and re-parenting, undo, marquee selection, floating topics, every structure, dialogs, search, presentation, exports, saving and reopening, a 1,453-topic map), writes screenshots and `report.txt` to the folder, and quits.
 
 ## Project layout

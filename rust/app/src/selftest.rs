@@ -251,6 +251,45 @@ impl Tester {
         }));
         s.push(Step::Wait(20));
         s.push(Step::Shot("17-search"));
+        // 1.2: due dates, numbering, find & replace
+        s.push(act(|app, t| {
+            app.close_search();
+            if let Some(id) = find_id(app, "Images") {
+                app.select(vec![id], false, false);
+            }
+            app.set_due(Some("2020-01-02".into()));
+            t.check(
+                "a past due date counts as overdue",
+                mindloom_core::model::stats(&app.doc, &app.today).overdue == 1 && app.stats_line().contains("1 overdue"),
+            );
+            app.doc.settings.numbering = "on".into();
+            app.commit(false);
+            let id = find_id(app, "Create").unwrap_or_default();
+            let first = app.layout_with(&app.doc, None, |l| l.get(&id).and_then(|t| t.b.lines.first().cloned()));
+            t.check("numbering prefixes main topics", first.as_deref() == Some("1  Create"));
+            app.search_open = true;
+            app.search_q = "topic".into();
+            app.replace_q = "subject".into();
+            app.run_search();
+        }));
+        s.push(Step::Wait(20));
+        s.push(Step::Shot("17b-due-numbering-replace"));
+        s.push(act(|app, t| {
+            let before = app.snapshot();
+            app.replace_all();
+            let count = |app: &App| {
+                let mut k = 0;
+                model::walk_doc(&app.doc, &mut |n, _| k += n.text.matches("subject").count());
+                k
+            };
+            t.check("replace all changes topic text", count(app) > 0);
+            app.undo();
+            t.check("undo reverts replace all", app.snapshot() == before);
+            app.doc.settings.numbering = "off".into();
+            app.commit(false);
+            app.search_q = "topic".into();
+            app.run_search();
+        }));
         s.push(act(|app, t| {
             t.check("search finds topics", !app.matches.is_empty());
             app.close_search();
@@ -267,6 +306,14 @@ impl Tester {
             t.check("PNG export", png.as_ref().is_ok_and(|b| std::fs::write(dir.join("export.png"), b).is_ok()));
             let pdf = crate::files::pdf(&svg.svg, &app.db);
             t.check("PDF export", pdf.as_ref().is_ok_and(|b| std::fs::write(dir.join("export.pdf"), b).is_ok()));
+            let csv = mindloom_core::io::to_csv(&app.doc);
+            t.check(
+                "CSV export round-trips",
+                mindloom_core::io::from_csv(&csv)
+                    .is_ok_and(|d| mindloom_core::model::stats(&d, &app.today).nodes == mindloom_core::model::stats(&app.doc, &app.today).nodes),
+            );
+            let html = mindloom_core::io::to_html(&app.doc, &svg.svg, &app.today);
+            t.check("HTML export", html.contains("<svg") && std::fs::write(dir.join("export.html"), &html).is_ok());
             let md = mindloom_core::io::to_markdown(&app.doc);
             t.check("Markdown export round-trips", mindloom_core::io::from_markdown(&md).is_ok());
             let p = dir.join("saved.mindloom");

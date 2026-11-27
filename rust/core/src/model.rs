@@ -100,6 +100,9 @@ pub struct Node {
     pub image: Option<Image>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task: Option<String>,
+    /// Due date, `YYYY-MM-DD` (1.2).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub due: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub side: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -165,6 +168,9 @@ pub struct Settings {
     pub font: String,
     pub shapes: Shapes,
     pub rainbow: Option<bool>,
+    /// "on": automatic outline numbering (1, 1.1, 1.1.1…), 1.2.
+    #[serde(default = "numbering_off")]
+    pub numbering: String,
     #[serde(serialize_with = "ser_f64")]
     pub h_gap: f64,
     #[serde(serialize_with = "ser_f64")]
@@ -189,6 +195,7 @@ impl Default for Settings {
             font: "system".into(),
             shapes: Shapes { root: "rounded".into(), main: "rounded".into(), sub: "rounded".into(), extra: Map::new() },
             rainbow: None,
+            numbering: "off".into(),
             h_gap: 56.0,
             v_gap: 14.0,
             line_width: 2.0,
@@ -197,6 +204,10 @@ impl Default for Settings {
             extra: Map::new(),
         }
     }
+}
+
+fn numbering_off() -> String {
+    "off".into()
 }
 
 fn default_settings_value() -> Value {
@@ -471,6 +482,9 @@ fn clean_node(n: &mut Map<String, Value>) {
             }
         }
     }
+    if n.get("due").is_some_and(|v| !v.is_null() && !v.as_str().is_some_and(is_date_str)) {
+        n.remove("due");
+    }
     for k in ["collapsed", "boundary"] {
         if let Some(v) = n.get(k).filter(|v| !v.is_null()) {
             if truthy(v) {
@@ -511,6 +525,7 @@ fn clean_settings(s: &mut Map<String, Value>) {
             sh.insert(k.into(), Value::String(v));
         }
     }
+    pick(s, "numbering", vec!["off", "on"], &d.numbering);
     let rb = match s.get("rainbow") {
         None | Some(Value::Null) => Value::Null,
         Some(v) => Value::Bool(truthy(v)),
@@ -1038,20 +1053,138 @@ pub fn collapse_to_level(doc: &mut Doc, level: usize) {
     });
 }
 
-fn plain_text(n: &Node) -> String {
-    [n.text.as_str(), n.note.as_deref().unwrap_or(""), &n.tags.as_ref().map(|t| t.join(" ")).unwrap_or_default(), n.link.as_deref().unwrap_or("")]
+// ---------- dates (due dates are plain YYYY-MM-DD strings, no timezone surprises) ----------
+
+const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+fn ymd(v: &str) -> Option<(i64, i64, i64)> {
+    let b = v.as_bytes();
+    if b.len() != 10 || b[4] != b'-' || b[7] != b'-' || !b.iter().enumerate().all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit()) {
+        return None;
+    }
+    Some((v[0..4].parse().ok()?, v[5..7].parse().ok()?, v[8..10].parse().ok()?))
+}
+
+/// A real calendar date written `YYYY-MM-DD`. (Years below 100 never are: in JavaScript `Date.UTC` maps them to 19xx.)
+pub fn is_date_str(v: &str) -> bool {
+    let Some((y, m, d)) = ymd(v) else { return false };
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) || y < 100 {
+        return false;
+    }
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][(m - 1) as usize];
+    d <= days
+}
+
+/// `'2026-11-20'` → `'20 Nov'` in the year of `today` (`YYYY-MM-DD`), else `'20 Nov 2027'`.
+pub fn format_due(due: &str, today: &str) -> String {
+    if !is_date_str(due) {
+        return String::new();
+    }
+    let Some((y, m, d)) = ymd(due) else { return String::new() };
+    let base = format!("{d} {}", MONTHS[(m - 1) as usize]);
+    if Some(y) == today.get(0..4).and_then(|t| t.parse::<i64>().ok()) {
+        base
+    } else {
+        format!("{base} {y}")
+    }
+}
+
+/// Has a due date before `today` and is not a finished task.
+pub fn is_overdue(n: &Node, today: &str) -> bool {
+    n.due.as_deref().is_some_and(|d| is_date_str(d) && n.task.as_deref() != Some("done") && d < today)
+}
+
+/// `localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })`: Unicode collation, numbers by value,
+/// ignoring case and accents.
+pub fn collate(a: &str, b: &str) -> std::cmp::Ordering {
+    use icu_collator::options::{CollatorOptions, Strength};
+    use icu_collator::preferences::CollationNumericOrdering;
+    use std::sync::OnceLock;
+    static C: OnceLock<Option<icu_collator::CollatorBorrowed<'static>>> = OnceLock::new();
+    let c = C.get_or_init(|| {
+        let mut prefs = icu_collator::CollatorPreferences::default();
+        prefs.numeric_ordering = Some(CollationNumericOrdering::True);
+        let mut o = CollatorOptions::default();
+        o.strength = Some(Strength::Primary);
+        icu_collator::Collator::try_new(prefs, o).ok()
+    });
+    match c {
+        Some(c) => c.compare(a, b),
+        None => a.cmp(b),
+    }
+}
+
+fn plain_text(n: &Node, today: &str) -> String {
+    let due = n.due.as_deref().unwrap_or("");
+    let fmt = if due.is_empty() { String::new() } else { format_due(due, today) };
+    [n.text.as_str(), n.note.as_deref().unwrap_or(""), &n.tags.as_ref().map(|t| t.join(" ")).unwrap_or_default(), n.link.as_deref().unwrap_or(""), due, &fmt]
         .join(" ")
         .to_lowercase()
 }
 
-pub fn search(doc: &Doc, query: &str) -> Vec<String> {
+/// Replace every occurrence of `find` in topic text and notes (ignoring case unless asked).
+/// Plain string matching, never a pattern. Returns the number of replacements.
+pub fn replace_text(doc: &mut Doc, find: &str, replacement: &str, case_sensitive: bool) -> usize {
+    if find.is_empty() {
+        return 0;
+    }
+    // positions are found in the lowercased text and applied to the original, in UTF-16 units, as 1.x does
+    let pin: Vec<u16> = if case_sensitive { find.encode_utf16().collect() } else { find.to_lowercase().encode_utf16().collect() };
+    let step = find.encode_utf16().count();
+    let rep: Vec<u16> = replacement.encode_utf16().collect();
+    let mut count = 0;
+    let mut swap = |s: &str| -> String {
+        if s.is_empty() {
+            return String::new();
+        }
+        let orig: Vec<u16> = s.encode_utf16().collect();
+        let hay: Vec<u16> = if case_sensitive { orig.clone() } else { s.to_lowercase().encode_utf16().collect() };
+        let mut out: Vec<u16> = vec![];
+        let mut i = 0;
+        loop {
+            let j = (i..=hay.len().saturating_sub(pin.len())).find(|&j| j + pin.len() <= hay.len() && hay[j..j + pin.len()] == pin[..]);
+            let Some(j) = j.filter(|_| i <= hay.len()) else {
+                out.extend_from_slice(orig.get(i.min(orig.len())..).unwrap_or(&[]));
+                return String::from_utf16_lossy(&out);
+            };
+            out.extend_from_slice(orig.get(i.min(orig.len())..j.min(orig.len())).unwrap_or(&[]));
+            out.extend_from_slice(&rep);
+            count += 1;
+            i = j + step;
+        }
+    };
+    walk_doc_mut(doc, &mut |n, _| {
+        n.text = swap(&n.text);
+        if let Some(note) = n.note.as_ref().filter(|x| !x.is_empty()) {
+            n.note = Some(swap(note));
+        }
+    });
+    count
+}
+
+/// Sort a topic's subtopics by due date (dated first, earliest first), then A→Z. True if the order changed.
+pub fn sort_by_due(doc: &mut Doc, id: &str) -> bool {
+    let Some(n) = get_mut(doc, id) else { return false };
+    if n.children.len() < 2 {
+        return false;
+    }
+    let before: Vec<String> = n.children.iter().map(|c| c.id.clone()).collect();
+    n.children.sort_by(|a, b| {
+        let (da, db) = (a.due.as_deref().filter(|x| !x.is_empty()).unwrap_or("9999-99-99"), b.due.as_deref().filter(|x| !x.is_empty()).unwrap_or("9999-99-99"));
+        collate(da, db).then_with(|| collate(&a.text, &b.text))
+    });
+    n.children.iter().map(|c| c.id.clone()).collect::<Vec<_>>() != before
+}
+
+pub fn search(doc: &Doc, query: &str, today: &str) -> Vec<String> {
     let q = crate::js::trim(query).to_lowercase();
     if q.is_empty() {
         return vec![];
     }
     let mut out = vec![];
     walk_doc(doc, &mut |n, _| {
-        if plain_text(n).contains(&q) {
+        if plain_text(n, today).contains(&q) {
             out.push(n.id.clone());
         }
     });
@@ -1064,8 +1197,10 @@ pub struct Stats {
     pub words: usize,
     pub tasks: usize,
     pub done: usize,
+    pub due: usize,
+    pub overdue: usize,
 }
-pub fn stats(doc: &Doc) -> Stats {
+pub fn stats(doc: &Doc, today: &str) -> Stats {
     let mut s = Stats::default();
     walk_doc(doc, &mut |n, _| {
         s.nodes += 1;
@@ -1074,6 +1209,12 @@ pub fn stats(doc: &Doc) -> Stats {
             s.tasks += 1;
             if t == "done" {
                 s.done += 1;
+            }
+        }
+        if crate::js::some_str(&n.due).is_some() {
+            s.due += 1;
+            if is_overdue(n, today) {
+                s.overdue += 1;
             }
         }
     });
@@ -1153,6 +1294,14 @@ impl History {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn collation_is_numeric_and_ignores_case_and_accents() {
+        let mut v = ["item 10", "Item 2", "item 1", "apple", "Éclair", "eclair"];
+        v.sort_by(|a, b| collate(a, b));
+        assert_eq!(v, ["apple", "Éclair", "eclair", "item 1", "Item 2", "item 10"]);
+        assert_eq!(collate("é", "E"), std::cmp::Ordering::Equal);
+    }
     #[test]
     fn history_caps_but_keeps_last_two() {
         let mut h = History::new(300, 100);

@@ -11,6 +11,9 @@ use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::io::Read;
 
+/// The day record.js pins the clock to.
+const TODAY: &str = "2026-11-15";
+
 fn cases(name: &str) -> Vec<Value> {
     let path = format!("{}/../cases/{name}.json.gz", env!("CARGO_MANIFEST_DIR"));
     let mut s = String::new();
@@ -118,7 +121,7 @@ fn summary(l: &Layout) -> Value {
             json!({ "id": t.id, "x": t.x, "y": t.y, "w": t.w, "h": t.h, "depth": t.depth, "branch": t.branch, "dir": t.dir.as_str(),
                 "side": t.left.map(|l| if l { "left" } else { "right" }), "moved": t.moved, "lines": b.lines, "lh": b.lh,
                 "row": { "x": b.row.x, "y": b.row.y, "w": b.row.w, "h": b.row.h, "textX": b.row.text_x, "textW": b.row.text_w, "textH": b.row.text_h },
-                "tagsX": b.tags_x, "tagsY": b.tags_y, "tags": b.tags.iter().map(|g| json!({ "text": g.text, "w": g.w })).collect::<Vec<_>>(),
+                "tagsX": b.tags_x, "tagsY": b.tags_y, "tags": b.tags.iter().map(|g| if g.due { json!({ "text": g.text, "w": g.w, "kind": "due", "overdue": g.overdue }) } else { json!({ "text": g.text, "w": g.w }) }).collect::<Vec<_>>(),
                 "img": b.img.map(|(w, h)| json!({ "w": w, "h": h })), "imgPos": b.img_pos.map(|(x, y)| json!({ "x": x, "y": y })),
                 "style": style_json(&b.style) })
         })
@@ -167,7 +170,7 @@ fn layout_and_render() {
         let doc: Doc = model::normalize_value(c["doc"].clone()).expect("doc");
         let theme = themes::get_theme(&doc.settings.theme);
         let measure = layout::test_measure;
-        let ctx = Ctx { theme, settings: &doc.settings, measure: &measure, focus_id: None, ignore_offset_id: None };
+        let ctx = Ctx { theme, settings: &doc.settings, measure: &measure, focus_id: None, ignore_offset_id: None, today: TODAY };
         let l = layout::layout(&doc, &ctx);
         let mut errs = vec![];
         diff("layout", &summary(&l), &c["layout"], &mut errs);
@@ -185,6 +188,7 @@ fn layout_and_render() {
                     measure: &measure,
                     focus_id: (key == "focus").then_some(id),
                     ignore_offset_id: (key == "ignore").then_some(id),
+                    today: TODAY,
                 };
                 diff(key, &summary(&layout::layout(&doc, &ctx)), &f["layout"], &mut errs);
             }
@@ -294,7 +298,10 @@ fn text_formats() {
         str_diff("txt", &io::to_text(&doc), c["txt"].as_str().unwrap(), &mut errs);
         str_diff("mm", &io::to_freemind(&doc), c["mm"].as_str().unwrap(), &mut errs);
         type Parse = fn(&str) -> Result<Doc, String>;
-        let parsers: [(&str, Parse); 4] = [("md", io::from_markdown), ("opml", io::from_opml), ("txt", io::from_text), ("mm", io::from_freemind)];
+        str_diff("csv", &io::to_csv(&doc), c["csv"].as_str().unwrap(), &mut errs);
+        str_diff("html", &io::to_html(&doc, "<svg>map</svg>", TODAY), c["html"].as_str().unwrap(), &mut errs);
+        let parsers: [(&str, Parse); 5] =
+            [("md", io::from_markdown), ("opml", io::from_opml), ("txt", io::from_text), ("mm", io::from_freemind), ("csv", io::from_csv)];
         for (k, f) in parsers {
             diff(&format!("back.{k}"), &result_doc(f(c[k].as_str().unwrap())), &c["back"][k], &mut errs);
         }
@@ -394,17 +401,39 @@ fn operations() {
                 Value::Null
             }
             "relation" => json!(model::add_relation(&mut doc, &a, &b, text).is_some()),
-            "search" => Value::Array(model::search(&doc, args["q"].as_str().unwrap()).iter().map(|id| path_of(&doc, id)).collect()),
+            "search" => Value::Array(model::search(&doc, args["q"].as_str().unwrap(), TODAY).iter().map(|id| path_of(&doc, id)).collect()),
             "stats" => {
-                let s = model::stats(&doc);
-                json!({ "nodes": s.nodes, "words": s.words, "tasks": s.tasks, "done": s.done })
+                let s = model::stats(&doc, TODAY);
+                json!({ "nodes": s.nodes, "words": s.words, "tasks": s.tasks, "done": s.done, "due": s.due, "overdue": s.overdue })
             }
+            "replaceText" => {
+                json!(model::replace_text(&mut doc, args["find"].as_str().unwrap(), args["rep"].as_str().unwrap(), args["flag"].as_bool() == Some(true)))
+            }
+            "sortByDue" => json!(model::sort_by_due(&mut doc, &a)),
             _ => panic!("{op}"),
         };
         let mut errs = vec![];
         diff("result", &result, &c["result"], &mut errs);
         diff("after", &canon(&doc), &c["after"], &mut errs);
         rep.case(format!("case {i} {op} {args}"), errs);
+    }
+    rep.finish();
+}
+
+#[test]
+fn dates() {
+    let mut rep = Report::new("dates");
+    for c in cases("dates") {
+        let d = c["d"].as_str().unwrap();
+        let mut errs = vec![];
+        let todo = model::Node { due: Some(d.into()), task: Some("todo".into()), ..Default::default() };
+        let done = model::Node { due: Some(d.into()), task: Some("done".into()), ..Default::default() };
+        diff("valid", &json!(model::is_date_str(d)), &c["valid"], &mut errs);
+        diff("fmt", &json!(model::format_due(d, TODAY)), &c["fmt"], &mut errs);
+        diff("overdueTodo", &json!(model::is_overdue(&todo, TODAY)), &c["overdueTodo"], &mut errs);
+        diff("overdueDone", &json!(model::is_overdue(&done, TODAY)), &c["overdueDone"], &mut errs);
+        diff("today", &json!(TODAY), &c["today"], &mut errs);
+        rep.case(format!("{d:?}"), errs);
     }
     rep.finish();
 }

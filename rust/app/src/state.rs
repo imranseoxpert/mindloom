@@ -274,6 +274,8 @@ pub enum Dialog {
     About,
     SaveChanges(After),
     Link(String),
+    /// Due date being typed, `YYYY-MM-DD`.
+    Due(String),
     RelLabel(String),
     Ai(Box<crate::ui::AiForm>),
 }
@@ -332,46 +334,18 @@ pub struct App {
     pub quit_ok: bool,
     pub note_focus: bool,
     pub previews: HashMap<String, Doc>,
+    /// Today, `YYYY-MM-DD` in local time (due dates, "overdue").
+    pub today: String,
+    pub replace_q: String,
+}
+
+/// Today's date in local time, `YYYY-MM-DD`.
+pub fn today() -> String {
+    jiff::Zoned::now().date().to_string()
 }
 
 pub fn measure_fn<'a>(ctx: &'a egui::Context, fonts: &'a MapFonts, cache: &'a MeasureCache) -> impl Fn(&str, &FontSpec) -> f64 + 'a {
     move |t: &str, f: &FontSpec| cache.width(ctx, fonts, t, f)
-}
-
-pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
-    let (a, b) = (a.to_lowercase(), b.to_lowercase());
-    let (mut x, mut y) = (a.chars().peekable(), b.chars().peekable());
-    loop {
-        match (x.peek().copied(), y.peek().copied()) {
-            (None, None) => return std::cmp::Ordering::Equal,
-            (None, _) => return std::cmp::Ordering::Less,
-            (_, None) => return std::cmp::Ordering::Greater,
-            (Some(c), Some(d)) if c.is_ascii_digit() && d.is_ascii_digit() => {
-                let mut n1 = String::new();
-                while let Some(c) = x.peek().copied().filter(char::is_ascii_digit) {
-                    n1.push(c);
-                    x.next();
-                }
-                let mut n2 = String::new();
-                while let Some(c) = y.peek().copied().filter(char::is_ascii_digit) {
-                    n2.push(c);
-                    y.next();
-                }
-                let (v1, v2) = (n1.trim_start_matches('0'), n2.trim_start_matches('0'));
-                let o = v1.len().cmp(&v2.len()).then_with(|| v1.cmp(v2));
-                if o != std::cmp::Ordering::Equal {
-                    return o;
-                }
-            }
-            (Some(c), Some(d)) => {
-                if c != d {
-                    return c.cmp(&d);
-                }
-                x.next();
-                y.next();
-            }
-        }
-    }
 }
 
 /// The first map people see.
@@ -451,6 +425,8 @@ impl App {
             quit_ok: false,
             note_focus: false,
             previews: HashMap::new(),
+            today: today(),
+            replace_q: String::new(),
         }
     }
 
@@ -482,7 +458,7 @@ impl App {
     pub fn layout_with<R>(&self, doc: &Doc, ignore: Option<&str>, f: impl FnOnce(&Layout) -> R) -> R {
         let m = measure_fn(&self.ctx, &self.fonts, &self.measure);
         let theme = themes::get_theme(&doc.settings.theme);
-        let ctx = Ctx { theme, settings: &doc.settings, measure: &m, focus_id: self.focus_id.as_deref(), ignore_offset_id: ignore };
+        let ctx = Ctx { theme, settings: &doc.settings, measure: &m, focus_id: self.focus_id.as_deref(), ignore_offset_id: ignore, today: &self.today };
         let l = layout::layout(doc, &ctx);
         f(&l)
     }
@@ -910,8 +886,44 @@ impl App {
         if n.children.len() < 2 {
             return;
         }
-        n.children.sort_by(|a, b| natural_cmp(&a.text, &b.text));
+        n.children.sort_by(|a, b| model::collate(&a.text, &b.text));
         self.commit(true);
+    }
+    pub fn sort_by_due(&mut self) {
+        let Some(id) = self.primary() else { return };
+        if model::get(&self.doc, &id).is_none_or(|n| n.children.len() < 2) {
+            return;
+        }
+        if model::sort_by_due(&mut self.doc, &id) {
+            self.commit(true);
+        } else {
+            self.toast("Subtopics are already in due-date order.");
+        }
+    }
+    /// Set (or with `None`, remove) the due date of the selected topics.
+    pub fn set_due(&mut self, due: Option<String>) {
+        if let Some(d) = &due {
+            if !model::is_date_str(d) {
+                return self.toast("That is not a valid date — use YYYY-MM-DD, e.g. 2026-12-01.");
+            }
+        }
+        if self.for_selected(|n| n.due = due.clone()) {
+            self.commit(false);
+        }
+    }
+    /// Find & replace across all topic text and notes (the search box holds what to find).
+    pub fn replace_all(&mut self) {
+        let find = self.search_q.clone();
+        if find.is_empty() {
+            return self.toast("Type what to find first.");
+        }
+        let n = model::replace_text(&mut self.doc, &find, &self.replace_q.clone(), false);
+        if n == 0 {
+            return self.toast(format!("No matches for “{find}”."));
+        }
+        self.commit(false);
+        self.run_search();
+        self.toast(format!("Replaced {n} occurrence{} — undo with {}", if n == 1 { "" } else { "s" }, crate::ui::kb("Mod+Z")));
     }
     pub fn reset_position(&mut self) {
         let mut k = 0;
@@ -1128,7 +1140,7 @@ impl App {
     // ---------- search ----------
 
     pub fn run_search(&mut self) {
-        self.matches = model::search(&self.doc, &self.search_q);
+        self.matches = model::search(&self.doc, &self.search_q, &self.today);
         self.match_idx = 0;
         for id in self.matches.clone() {
             model::expand_to(&mut self.doc, &id);
@@ -1431,6 +1443,12 @@ impl App {
             "opml" => self.save_bytes("opml", "OPML", io::to_opml(&self.doc).as_bytes(), "Exported OPML"),
             "txt" => self.save_bytes("txt", "Text", io::to_text(&self.doc).as_bytes(), "Exported text outline"),
             "mm" => self.save_bytes("mm", "FreeMind", io::to_freemind(&self.doc).as_bytes(), "Exported FreeMind map"),
+            "csv" => self.save_bytes("csv", "CSV spreadsheet", io::to_csv(&self.doc).as_bytes(), "Exported CSV — opens in Excel, Sheets or Numbers"),
+            "html" => {
+                let svg = self.export_svg(false).svg;
+                let page = io::to_html(&self.doc, &svg, &self.today);
+                self.save_bytes("html", "Web page", page.as_bytes(), "Exported web page — open it in any browser");
+            }
             "copy-image" => {
                 let e = self.export_svg(false);
                 let r = files::raster(&e.svg, e.width, e.height, 2.0, &self.db).map_err(|e| e.to_string()).and_then(|pm| {
@@ -1873,22 +1891,17 @@ impl App {
 
     /// Imported or AI-generated outline as a new map or a branch.
     pub fn stats_line(&self) -> String {
-        let s = model::stats(&self.doc);
+        let s = model::stats(&self.doc, &self.today);
         let tasks =
             if s.tasks > 0 { format!(" · {}/{} tasks done ({}%)", s.done, s.tasks, (s.done as f64 / s.tasks as f64 * 100.0).round()) } else { String::new() };
-        format!("{} topics · {} words{tasks}", s.nodes, s.words)
+        let overdue = if s.overdue > 0 { format!(" · ⚠ {} overdue", s.overdue) } else { String::new() };
+        format!("{} topics · {} words{tasks}{overdue}", s.nodes, s.words)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn natural_sort() {
-        let mut v = vec!["item 10", "Item 2", "item 1", "apple"];
-        v.sort_by(|a, b| natural_cmp(a, b));
-        assert_eq!(v, ["apple", "item 1", "Item 2", "item 10"]);
-    }
     #[test]
     fn welcome_has_extras() {
         let d = welcome_doc();

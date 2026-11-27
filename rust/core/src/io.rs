@@ -292,10 +292,11 @@ pub fn to_markdown(doc: &Doc) -> String {
                 None => "",
             };
             let link = js::some_str(&n.link).map(|l| format!(" ([link]({l}))")).unwrap_or_default();
+            let due = js::some_str(&n.due).map(|d| format!(" (due: {d})")).unwrap_or_default();
             match d {
-                0 => out.extend([format!("# {text}{link}"), String::new()]),
-                1 => out.extend([format!("## {task}{text}{link}"), String::new()]),
-                _ => out.push(format!("{}- {task}{text}{link}", "  ".repeat(d - 2))),
+                0 => out.extend([format!("# {text}{link}{due}"), String::new()]),
+                1 => out.extend([format!("## {task}{text}{link}{due}"), String::new()]),
+                _ => out.push(format!("{}- {task}{text}{link}{due}", "  ".repeat(d - 2))),
             }
             if let Some(note) = js::some_str(&n.note) {
                 let pad = if d >= 2 { "  ".repeat(d - 1) } else { String::new() };
@@ -400,14 +401,20 @@ fn mk(a: &mut Arena, s: &str) -> usize {
     static LINK: LazyLock<Regex> = LazyLock::new(|| re(r"\[[^\]]*\]\((https?:[^)]+)\)"));
     static CLEAN: LazyLock<[Regex; 4]> = LazyLock::new(|| [re(r"\*\*(DOT+?)\*\*"), re(r"__(DOT+?)__"), re(r"`([^`]+)`"), re(r"\[([^\]]+)\]\(([^)]+)\)")]);
     let (task, s) = take_task(s);
+    static DUE: LazyLock<Regex> = LazyLock::new(|| re(r"\(due:WS*([0-9]{4}-[0-9]{2}-[0-9]{2})\)"));
     let link = LINK.captures(s).map(|c| c[1].to_string());
-    let mut t = s.to_string();
+    let due = DUE.captures(s).map(|c| (c[0].to_string(), c[1].to_string()));
+    let mut t = match &due {
+        Some((all, _)) => trim(&s.replacen(all.as_str(), "", 1)).to_string(),
+        None => s.to_string(),
+    };
     for r in CLEAN.iter() {
         t = r.replace_all(&t, "${1}").into_owned();
     }
     let mut n = Node::new(trim(&t));
     n.task = task.map(Into::into);
     n.link = link;
+    n.due = due.map(|d| d.1).filter(|d| model::is_date_str(d));
     a.add(n)
 }
 
@@ -416,7 +423,9 @@ fn mk(a: &mut Arena, s: &str) -> usize {
 pub fn to_opml(doc: &Doc) -> String {
     fn rec(n: &Node, d: usize, fl: bool) -> String {
         let pad = "  ".repeat(d + 2);
-        let note = js::some_str(&n.note).map(|v| format!(r#" _note="{}""#, xml_esc(v))).unwrap_or_default() + if fl { r#" _floating="true""# } else { "" };
+        let note = js::some_str(&n.note).map(|v| format!(r#" _note="{}""#, xml_esc(v))).unwrap_or_default()
+            + &js::some_str(&n.due).map(|v| format!(r#" _due="{}""#, xml_esc(v))).unwrap_or_default()
+            + if fl { r#" _floating="true""# } else { "" };
         if n.children.is_empty() {
             return format!("{pad}<outline text=\"{}\"{note}/>\n", xml_esc(&n.text));
         }
@@ -437,6 +446,7 @@ pub fn from_opml(text: &str) -> Result<Doc, String> {
         let t = x.attr(el, "text").filter(|v| !v.is_empty()).or(x.attr(el, "title").filter(|v| !v.is_empty())).unwrap_or("");
         let mut n = Node::new(t);
         n.note = x.attr(el, "_note").filter(|v| !v.is_empty()).map(Into::into);
+        n.due = x.attr(el, "_due").filter(|v| model::is_date_str(v)).map(Into::into);
         n.children = x.kids(el, "outline").map(|c| conv(x, c)).collect();
         n
     }
@@ -667,6 +677,250 @@ pub fn from_xmind(bytes: &[u8]) -> Result<Doc, String> {
     Ok(doc_from_tree(conv(&x, top), vec![]))
 }
 
+// ---------- CSV (spreadsheet export / import) ----------
+
+fn csv_cell(s: &str) -> String {
+    if s.contains(['"', ',', '\n', '\r']) {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+/// One row per topic, so a map opens cleanly in Excel, Google Sheets or Numbers.
+pub fn to_csv(doc: &Doc) -> String {
+    let mut rows = vec!["Topic,Path,Depth,Task,Due,Priority,Progress,Labels,Link,Note".to_string()];
+    fn walk(n: &Node, path: &[String], d: usize, floating: bool, rows: &mut Vec<String>) {
+        let text = n.text.replace('\n', " ");
+        let mut here = path.to_vec();
+        here.push(text.clone());
+        let icons = n.icons.clone().unwrap_or_default();
+        let pri = icons.iter().find(|m| m.len() == 2 && m.starts_with('p') && m.as_bytes()[1].is_ascii_digit());
+        let prog = icons.iter().find(|m| m.len() > 2 && m.starts_with("pr") && m[2..].bytes().all(|c| c.is_ascii_digit()));
+        let cells = [
+            text,
+            format!("{}{}", if floating { "(floating) " } else { "" }, here.join(" > ")),
+            d.to_string(),
+            match n.task.as_deref() {
+                Some("done") => "Done".into(),
+                Some("todo") => "To do".into(),
+                _ => String::new(),
+            },
+            n.due.clone().unwrap_or_default(),
+            pri.map(|p| p[1..].to_string()).unwrap_or_default(),
+            prog.map(|p| format!("{}%", &p[2..])).unwrap_or_default(),
+            n.tags.clone().unwrap_or_default().join("; "),
+            n.link.clone().unwrap_or_default(),
+            n.note.clone().unwrap_or_default().replace('\n', " "),
+        ];
+        rows.push(cells.iter().map(|c| csv_cell(c)).collect::<Vec<_>>().join(","));
+        for c in &n.children {
+            walk(c, &here, d + 1, floating, rows);
+        }
+    }
+    for (i, t) in doc.trees().enumerate() {
+        walk(t, &[], 0, i > 0, &mut rows);
+    }
+    rows.join("\r\n") + "\r\n"
+}
+
+/// Minimal RFC 4180 parser: quoted cells, embedded commas, quotes and newlines, CRLF or LF.
+pub fn parse_csv(text: &str) -> Vec<Vec<String>> {
+    let s = text.strip_prefix('\u{FEFF}').unwrap_or(text);
+    let (mut rows, mut row, mut cell, mut quoted) = (vec![], vec![], String::new(), false);
+    let mut it = s.chars().peekable();
+    while let Some(ch) = it.next() {
+        if quoted {
+            if ch == '"' {
+                if it.peek() == Some(&'"') {
+                    cell.push('"');
+                    it.next();
+                } else {
+                    quoted = false;
+                }
+            } else {
+                cell.push(ch);
+            }
+        } else if ch == '"' {
+            quoted = true;
+        } else if ch == ',' {
+            row.push(std::mem::take(&mut cell));
+        } else if ch == '\n' || ch == '\r' {
+            if ch == '\r' && it.peek() == Some(&'\n') {
+                it.next();
+            }
+            row.push(std::mem::take(&mut cell));
+            if row.len() > 1 || !row[0].is_empty() {
+                rows.push(std::mem::take(&mut row));
+            }
+            row.clear();
+        } else {
+            cell.push(ch);
+        }
+    }
+    row.push(cell);
+    if row.len() > 1 || !row[0].is_empty() {
+        rows.push(row);
+    }
+    rows
+}
+
+/// JavaScript `parseInt(s, 10)`: optional sign and leading digits; None when there are no digits.
+fn parse_int(s: &str) -> Option<i64> {
+    let t = trim(s);
+    let (neg, body) = match t.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, t.strip_prefix('+').unwrap_or(t)),
+    };
+    let digits: String = body.chars().take_while(char::is_ascii_digit).collect();
+    let v: i64 = digits.parse().ok()?;
+    Some(if neg { -v } else { v })
+}
+
+/// Import a CSV. Mindloom's own export round-trips (Depth rebuilds the tree; Task, Due, Labels, Link
+/// and Note are restored). A foreign CSV just needs a Topic, Title or Name column: rows become topics
+/// under one root, nested by a Depth or Level column when there is one.
+pub fn from_csv(text: &str) -> Result<Doc, String> {
+    static DONE: LazyLock<Regex> = LazyLock::new(|| re(r"done|complete|closed|yes|x"));
+    static SPLIT: LazyLock<Regex> = LazyLock::new(|| re(r"[;|]"));
+    let rows = parse_csv(text);
+    if rows.len() < 2 {
+        return Err("CSV has no data rows".into());
+    }
+    let head: Vec<String> = rows[0].iter().map(|h| trim(h).to_lowercase()).collect();
+    let col = |names: &[&str]| -> Option<usize> { names.iter().find_map(|nm| head.iter().position(|h| h == nm)) };
+    let ci_topic = col(&["topic", "title", "name", "task name", "subject"]).ok_or("CSV needs a Topic column")?;
+    let (ci_depth, ci_task, ci_due) = (col(&["depth", "level", "indent"]), col(&["task", "status", "state"]), col(&["due", "due date", "deadline", "date"]));
+    let (ci_tags, ci_link, ci_note) =
+        (col(&["labels", "tags", "label", "tag"]), col(&["link", "url", "hyperlink"]), col(&["note", "notes", "description", "details"]));
+    let get = |r: &[String], i: Option<usize>| -> String { i.and_then(|i| r.get(i)).map(|v| trim(v).to_string()).unwrap_or_default() };
+    let mut nodes: Vec<(Node, i64)> = vec![];
+    for r in &rows[1..] {
+        let topic = get(r, Some(ci_topic));
+        if topic.is_empty() {
+            continue;
+        }
+        let mut n = Node::new(topic);
+        let task = get(r, ci_task).to_lowercase();
+        if DONE.is_match(&task) {
+            n.task = Some("done".into());
+        } else if !task.is_empty() {
+            n.task = Some("todo".into());
+        }
+        let due = get(r, ci_due);
+        if model::is_date_str(&due) {
+            n.due = Some(due);
+        }
+        let tags = get(r, ci_tags);
+        if !tags.is_empty() {
+            n.tags = Some(SPLIT.split(&tags).map(|x| trim(x).to_string()).filter(|x| !x.is_empty()).collect());
+        }
+        let link = get(r, ci_link);
+        let lower = link.to_ascii_lowercase();
+        if lower.starts_with("http://") || lower.starts_with("https://") {
+            n.link = Some(link);
+        }
+        let note = get(r, ci_note);
+        if !note.is_empty() {
+            n.note = Some(note);
+        }
+        let depth = parse_int(&get(r, ci_depth)).filter(|d| *d >= 0).unwrap_or(if nodes.is_empty() { 0 } else { 1 });
+        nodes.push((n, depth));
+    }
+    if nodes.is_empty() {
+        return Err("CSV has no topics".into());
+    }
+    // the first depth-0 row is the root; a later depth-0 row starts a floating tree;
+    // deeper rows nest under the last shallower one
+    let mut a = Arena::default();
+    let (mut root, mut floating): (Option<usize>, Vec<usize>) = (None, vec![]);
+    let mut stack: Vec<(usize, i64)> = vec![];
+    for (node, depth) in nodes {
+        let id = a.add(node);
+        if depth == 0 || stack.is_empty() {
+            if root.is_none() {
+                root = Some(id);
+            } else {
+                a.nodes[id].place = Some(true);
+                floating.push(id);
+            }
+            stack = vec![(id, 0)];
+            continue;
+        }
+        while stack.len() > 1 && stack.last().is_some_and(|s| s.1 >= depth) {
+            stack.pop();
+        }
+        if let Some(&(p, _)) = stack.last() {
+            a.kids[p].push(id);
+        }
+        stack.push((id, depth));
+    }
+    let root = root.map(|r| a.build(r)).unwrap_or_else(|| Node::new(""));
+    let floating = floating.into_iter().map(|f| a.build(f)).collect();
+    Ok(doc_from_tree(root, floating))
+}
+
+// ---------- standalone HTML (viewable in any browser, no Mindloom needed) ----------
+
+/// A web page with the map picture (`svg`) and the outline. `today` is `YYYY-MM-DD`.
+pub fn to_html(doc: &Doc, svg: &str, today: &str) -> String {
+    let e = crate::render::esc;
+    let s = model::stats(doc, today);
+    fn list(n: &Node, today: &str, out: &mut String) {
+        let e = crate::render::esc;
+        let overdue = model::is_overdue(n, today);
+        let mut badges: Vec<String> = vec![];
+        if let Some(t) = js::some_str(&n.task) {
+            badges.push(format!("<span class=\"badge\">{}</span>", if t == "done" { "☑ done" } else { "☐ to do" }));
+        }
+        if let Some(d) = js::some_str(&n.due) {
+            badges.push(format!(
+                "<span class=\"badge{}\">📅 {}{}</span>",
+                if overdue { " overdue" } else { "" },
+                e(&model::format_due(d, today)),
+                if overdue { " — overdue" } else { "" }
+            ));
+        }
+        let tags: String = n.tags.iter().flatten().map(|t| format!("<span class=\"badge\">{}</span>", e(t))).collect();
+        if !tags.is_empty() {
+            badges.push(tags);
+        }
+        if let Some(l) = js::some_str(&n.link) {
+            badges.push(format!("<a href=\"{}\" rel=\"noopener\">link</a>", e(l)));
+        }
+        let badges = badges.join(" ");
+        let topic = if n.text.is_empty() { "Topic".to_string() } else { e(&n.text) };
+        out.push_str(&format!("<li><span class=\"topic\">{topic}</span>{}", if badges.is_empty() { String::new() } else { format!(" {badges}") }));
+        if let Some(note) = js::some_str(&n.note) {
+            out.push_str(&format!("<div class=\"note\">{}</div>", e(note).replace('\n', "<br/>")));
+        }
+        if !n.children.is_empty() {
+            out.push_str("<ul>");
+            for c in &n.children {
+                list(c, today, out);
+            }
+            out.push_str("</ul>");
+        }
+        out.push_str("</li>");
+    }
+    let mut outline = String::new();
+    for t in doc.trees() {
+        list(t, today, &mut outline);
+    }
+    let title = if doc.root.text.is_empty() { "Mind map".to_string() } else { doc.root.text.clone() };
+    let tasks = if s.tasks > 0 { format!(" · {}/{} tasks done", s.done, s.tasks) } else { String::new() };
+    let overdue = if s.overdue > 0 { format!(" · {} overdue", s.overdue) } else { String::new() };
+    let map = if svg.is_empty() { String::new() } else { format!("<div class=\"map\">{svg}</div>") };
+    format!(
+        "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>\n<title>{t} — Mindloom</title>\n<style>{HTML_CSS}</style>\n</head><body><main>\n<h1>{t}</h1>\n<div class=\"meta\">{} topics · {} words{tasks}{overdue}</div>\n{map}\n<h2>Outline</h2>\n<ul>{outline}</ul>\n<footer>Exported from Mindloom — a fast, friendly mind mapping app.</footer>\n</main></body></html>\n",
+        s.nodes,
+        s.words,
+        t = e(&title)
+    )
+}
+
+const HTML_CSS: &str = "body{font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;margin:0;padding:32px 20px 60px;background:#f6f7fb;color:#1d2440}main{max-width:980px;margin:0 auto}h1{font-size:26px;margin:0 0 6px}.meta{color:#5c677d;font-size:13px;margin-bottom:20px}.map{background:#fff;border:1px solid #dfe3ee;border-radius:12px;padding:12px;overflow:auto}.map svg{max-width:100%;height:auto}h2{font-size:18px;margin:28px 0 8px}ul{margin:6px 0 6px 18px;padding:0}li{margin:5px 0;line-height:1.55}.topic{font-weight:600}.badge{display:inline-block;background:#eef1f8;border-radius:999px;padding:1px 8px;font-size:11.5px;font-weight:600;color:#3c4666}.badge.overdue{background:#e03131;color:#fff}.note{color:#5c677d;font-size:13.5px;margin:3px 0 3px 2px}footer{color:#8a93ad;font-size:12px;margin-top:36px}";
+
 // ---------- detection ----------
 
 /// `/^#\s/m`: a line starting with `#` and a space.
@@ -695,6 +949,9 @@ pub fn import_text(name: &str, text: &str) -> Result<Doc, String> {
     }
     if ext == "opml" || OPML.is_match(slice16(trimmed, 300)) {
         return from_opml(text);
+    }
+    if ext == "csv" {
+        return from_csv(text);
     }
     if ext == "mm" || MAP.is_match(trimmed) {
         return from_freemind(text);

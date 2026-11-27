@@ -407,6 +407,27 @@ fn node_svg(t: &Item, o: &SceneOpts, out: &mut String) {
     }
     let mut gx = b.tags_x;
     for tg in &b.tags {
+        if tg.due {
+            let (fill, txt) = if tg.overdue { ("#e03131", "#ffffff") } else { (st.line.as_str(), st.color.as_str()) };
+            let _ = write!(
+                out,
+                r#"<g class="tag due{}"><title>Due {}{}</title><rect x="{}" y="{}" width="{}" height="18" rx="9" fill="{fill}" fill-opacity="{}"/><text x="{}" y="{}" text-anchor="middle" dominant-baseline="central" font-size="11" font-weight="600" font-family="{}" fill="{txt}" fill-opacity="{}">{}</text></g>"#,
+                if tg.overdue { " overdue" } else { "" },
+                esc(t.node.due.as_deref().unwrap_or("")),
+                if tg.overdue { " — overdue" } else { "" },
+                n(gx),
+                n(b.tags_y),
+                num(tg.w),
+                if tg.overdue { "0.92" } else { "0.18" },
+                n(gx + tg.w / 2.0),
+                n(b.tags_y + 9.5),
+                esc(st.font),
+                if tg.overdue { "1" } else { "0.85" },
+                esc(&tg.text)
+            );
+            gx += tg.w + 4.0;
+            continue;
+        }
         let _ = write!(
             out,
             r#"<g class="tag"><rect x="{}" y="{}" width="{}" height="18" rx="9" fill="{}" fill-opacity="0.18"/><text x="{}" y="{}" text-anchor="middle" dominant-baseline="central" font-size="11" font-weight="600" font-family="{}" fill="{}" fill-opacity="0.85">{}</text></g>"#,
